@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Add Chapter{% endblock %}
+{% block content %}
+    <div class="page-header">
+        <a href="{{ url_for('manage_course', course_id=course.id) }}" class="back-link">← Back to {{ course.title }}</a>
+        <h1>Add a New Chapter</h1>
+    </div>
+    
+    <form id="lesson-form" action="{{ url_for('save_chapter', course_id=course.id) }}" method="post">
+        <div class="form-group">
+            <label for="title">Chapter Title</label>
+            <input type="text" id="title" name="title" required placeholder="e.g., Introduction to the Water Cycle">
+        </div>
+
+        <div class="form-group">
+            <label for="script">Lesson Script</label>
+            <textarea id="script" name="script" rows="20" placeholder="Write your lesson script here..."></textarea>
+        </div>
+        
+        <div class="form-group" style="margin-top: 20px;">
+            <label>Tag Cheatsheet</label>
+            <div class="instructions">
+                <b>Use these tags in the script above:</b><br>
+                <code>[QUESTION: Your question? OPTIONS: A) Opt 1, B) Opt 2... ANSWER: B]</code><br>
+                <code>[QUESTION_SA: Your question? KEYWORDS: concept1, concept2]</code><br>
+                <small>Note: Image tags are not supported in this version.</small>
+            </div>
+        </div>
+        
+        <button type="submit">Save Chapter</button>
+    </form>
+{% endblock %}

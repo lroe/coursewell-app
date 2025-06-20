@@ -1,0 +1,49 @@
+
+{% extends "base.html" %}
+{% block title %}Explore Courses{% endblock %}
+{% block content %}
+    <h1>Explore Courses</h1>
+    <p>Discover new courses created by our community of instructors.</p>
+
+    {% if courses %}
+        <ul class="course-list">
+            {% for course in courses %}
+                <li class="course-item">
+                    <div class="course-info">
+        <span class="course-title">{{ course.title }}</span>
+        <span class="chapter-count">
+            By {{ course.creator.username }} | {{ course.lessons|length }} Chapters
+        </span>
+        <!-- Add this new div for course metadata -->
+        <div class="course-meta">
+            {% if course.reviews.count() > 0 %}
+                <span class="rating-stars">★</span>
+                <span>{{ "%.1f"|format(course.average_rating) }} ({{ course.reviews.count() }} reviews)</span>
+            {% else %}
+                <span>No reviews yet</span>
+            {% endif %}
+        </div>
+    </div>
+                    <div class="course-actions">
+                        {% if current_user.is_authenticated %}
+                            {% if course.creator.id == current_user.id %}
+                                <a href="{{ url_for('manage_course', course_id=course.id) }}" class="btn btn-secondary">Manage</a>
+                            {% elif current_user.is_enrolled(course) %}
+                                 <a href="{{ url_for('course_player', course_id=course.id) }}" class="btn btn-primary">Resume Learning</a>
+                            {% else %}
+                                <form action="{{ url_for('enroll_in_course', course_id=course.id) }}" method="post" style="display: inline;">
+                                    <button type="submit" class="btn btn-primary">Enroll</button>
+                                </form>
+                            {% endif %}
+                        {% else %}
+                            <a href="{{ url_for('login', next=request.path) }}" class="btn btn-primary">Login to Enroll</a>
+                        {% endif %}
+                    </div>
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p>There are no published courses yet. Check back soon!</p>
+    {% endif %}
+
+{% endblock %}

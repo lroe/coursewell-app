@@ -1,0 +1,34 @@
+{
+  "steps": [
+    {
+      "type": "CONTENT",
+      "text": "Hello! Let's learn about photosynthesis. Photosynthesis is the process plants use to turn light, water, and carbon dioxide into food. It's like a plant's way of cooking its own dinner!"
+    },
+    {
+      "type": "MEDIA",
+      "media_type": "image",
+      "filename": "photosynthesis.png",
+      "alt_text": "A simple diagram showing a plant taking in sunlight, CO2, and water, and releasing oxygen.",
+      "media_url": "/static/uploads/photosynthesis.png"
+    },
+    {
+      "type": "CONTENT",
+      "text": "There are two main ingredients a plant needs from its environment. Think about what you give a houseplant to keep it alive."
+    },
+    {
+      "type": "QUESTION_MCQ",
+      "question_text": "What are the two main *inputs* for photosynthesis?",
+      "options": [
+        "Oxygen and Sugar",
+        "Water and Carbon Dioxide",
+        "Sunlight and Soil",
+        "Oxygen and Water"
+      ],
+      "correct_answer": "B"
+    },
+    {
+      "type": "CONTENT",
+      "text": "Exactly! And the amazing thing is, while making its food, the plant releases oxygen, which is what we need to breathe."
+    }
+  ]
+}

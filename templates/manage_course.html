@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Manage Course{% endblock %}
+{% block content %}
+    <div class="page-header">
+        <a href="{{ url_for('dashboard') }}" class="back-link">← Back to Dashboard</a>
+        <h1>Manage: {{ course.title }}</h1>
+    </div>
+
+    <div class="course-management-actions">
+        <a href="{{ url_for('add_chapter_page', course_id=course.id) }}" class="btn btn-primary">Add New Chapter</a>
+         <form action="{{ url_for('toggle_publish_course', course_id=course.id) }}" method="post" style="display: inline;">
+            {% if course.lessons %}
+                {% if course.is_published %}
+                    <button type="submit" class="btn btn-secondary">Unpublish Course</button>
+                {% else %}
+                    <button type="submit" class="btn btn-primary">Publish Course</button>
+                {% endif %}
+            {% else %}
+                <button type="button" class="btn btn-secondary disabled" title="You must add at least one chapter before publishing.">Publish Course</button>
+            {% endif %}
+        </form>
+    </div>
+
+    <hr class="section-divider">
+
+    <h2>Chapters <span class="drag-hint">(You can drag and drop to re-order)</span></h2>
+    {% if course.lessons %}
+        <!-- Add an ID to the list so our JavaScript can target it -->
+        <ul id="chapter-list-sortable" class="chapter-list">
+            {% for chapter in course.lessons %}
+                <!-- Add a data attribute with the chapter's unique ID -->
+                <li class="chapter-item" data-id="{{ chapter.id }}">
+                    <span class="drag-handle">☰</span> <!-- A handle icon to indicate draggability -->
+                    <span class="chapter-number">Chapter {{ chapter.chapter_number }}</span>
+                    <span class="chapter-title">{{ chapter.title }}</span>
+                    <div class="chapter-actions">
+                        <a href="{{ url_for('edit_chapter_page', lesson_id=chapter.id) }}" class="btn btn-secondary">Edit</a>
+                        <form action="{{ url_for('delete_chapter', lesson_id=chapter.id) }}" method="post" style="display: inline;">
+                            <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to permanently delete this chapter? This action cannot be undone.');">
+                                Delete
+                            </button>
+                        </form>
+                    </div>
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p>This course has no chapters yet. Add your first one!</p>
+    {% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<!-- Include the SortableJS library from a CDN -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+
+<!-- Our custom JavaScript to handle the re-ordering -->
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const chapterList = document.getElementById('chapter-list-sortable');
+        if (chapterList) {
+            new Sortable(chapterList, {
+                animation: 150, // Animation speed
+                handle: '.drag-handle', // Specify the drag handle element
+                onEnd: function (evt) {
+                    // This function is called when the user drops a chapter
+                    const chapterIds = [];
+                    // Loop through the list items in their new order
+                    for (const item of chapterList.children) {
+                        // Get the chapter ID from the data-id attribute we added
+                        chapterIds.push(item.dataset.id);
+                    }
+
+                    // Send the new order to our backend API
+                    fetch(`/course/{{ course.id }}/reorder_chapters`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ order: chapterIds }),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            // If successful, reload the page to show the new chapter numbers
+                            window.location.reload();
+                        } else {
+                            alert('Could not save the new order. Please try again.');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('An error occurred while saving the new order.');
+                    });
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}

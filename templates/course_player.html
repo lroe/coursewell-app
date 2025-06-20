@@ -1,0 +1,77 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ current_lesson.title }} | {{ course.title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+   
+    
+    {# ADD THIS STYLE BLOCK #}
+    <style>
+        .tutor-message.main-content-block {
+            max-width: 95%;
+            width: 95%;
+            background: #fffaf0; /* Or #ffffff */
+            border: 1px solid #e5ded2;
+        }
+        .main-content-block p:first-child {
+            margin-top: 0;
+        }
+    </style>
+</head>
+<body class="course-player-body">
+
+    <div class="course-player-container">
+        <!-- Left Sidebar: Chapter Navigation -->
+        <div class="sidebar">
+            <h3>{{ course.title }}</h3>
+            <ul class="chapter-nav-list">
+    {% for chapter in course.lessons %}
+        {#- Set up dynamic classes for the chapter item -#}
+        {% set chapter_classes = ['chapter-nav-item'] %}
+        {% if chapter.id == current_lesson.id %}
+            {% set chapter_classes = chapter_classes + ['active'] %}
+        {% elif enrollment and chapter.chapter_number <= enrollment.last_completed_chapter_number %}
+            {% set chapter_classes = chapter_classes + ['completed'] %}
+        {% endif %}
+
+        <li class="{{ chapter_classes|join(' ') }}">
+            <a href="{{ url_for('student_chapter_view', course_id=course.id, chapter_number=chapter.chapter_number) }}">
+                {% if 'completed' in chapter_classes %}
+                    <span class="chapter-nav-icon">✓</span>
+                {% endif %}
+                <span class="chapter-nav-number">Chapter {{ chapter.chapter_number }}</span>
+                <span class="chapter-nav-title">{{ chapter.title }}</span>
+            </a>
+        </li>
+    {% endfor %}
+</ul>
+        </div>
+
+        <!-- Right Column: Chat Interface -->
+        <div class="main-chat-area">
+            <div class="chat-header">
+                <h2>{{ current_lesson.title }}</h2>
+            </div>
+            <div id="chat-box" class="chat-box">
+                <!-- Messages will appear here -->
+            </div>
+            <div class="qna-button-container">
+                <button id="ask-qna-btn">Ask a Question</button>
+            </div>
+            <div id="input-area" class="input-area">
+                <p id="system-message" class="system-message">Guidee is thinking...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Pass data to our JavaScript
+        const COURSE_ID = "{{ course.id }}";
+        const LESSON_ID = "{{ current_lesson.id }}";
+    </script>
+    <script src="{{ url_for('static', filename='js/lesson.js') }}"></script>
+</body>
+</html>

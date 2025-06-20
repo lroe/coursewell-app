@@ -1,0 +1,44 @@
+{
+  "steps": [
+    {
+      "type": "CONTENT",
+      "text": "Welcome to your first lesson on SEO! SEO stands for \"Search Engine Optimization.\" It's the art and science of making a website more attractive to search engines like Google.Think of Google as a massive library and a librarian who has read every book. When you search for something, you're asking the librarian to find the best, most relevant book for you. SEO is how we make sure our \"book\"\u2014our website\u2014is the one the librarian recommends first."
+    },
+    {
+      "type": "MEDIA",
+      "alt_text": "A diagram showing a search engine spider crawling the web, adding pages to an index, and then a user getting ranked results from that index."
+    },
+    {
+      "type": "CONTENT",
+      "text": "There are two main categories of SEO: On-Page SEO and Off-Page SEO.On-Page SEO includes all the things you can control directly on your own website. This is like organizing the chapters and text inside your book to make it easy to read. A huge part of this is choosing the right \"keywords\"\u2014the words and phrases people are actually searching for."
+    },
+    {
+      "type": "QUESTION_SA",
+      "question": "In your own words, what is On-Page SEO mainly concerned with?",
+      "keywords": [
+        "on-site",
+        "keywords",
+        "content"
+      ]
+    },
+    {
+      "type": "CONTENT",
+      "text": "That's a great way to put it! Now for the other side: Off-Page SEO.Off-Page SEO refers to actions taken outside of your own website to impact your rankings. This is like getting other trusted authors to recommend your book. The most important part of Off-Page SEO is getting \"backlinks.\" A backlink is simply a link from another website to yours. Google views these as votes of confidence, telling the librarian that your book is trustworthy and important."
+    },
+    {
+      "type": "QUESTION_MCQ",
+      "question": "What is the primary purpose of getting backlinks for Off-Page SEO?",
+      "options": {
+        "A": "To make your website look prettier",
+        "B": "To get votes of confidence and build trust with Google",
+        "C": "To increase the number of pages on your site",
+        "D": "To check for spelling errors"
+      },
+      "correct_answer": "B"
+    },
+    {
+      "type": "CONTENT",
+      "text": "And that's the core of it! On-Page SEO is about making your own site perfect with the right keywords. Off-Page SEO is about building authority and trust through backlinks from other sites. Master both, and you're well on your way to the top of the search results"
+    }
+  ]
+}

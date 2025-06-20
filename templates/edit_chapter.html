@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Edit Chapter{% endblock %}
+{% block content %}
+    <div class="page-header">
+        <a href="{{ url_for('manage_course', course_id=lesson.course_id) }}" class="back-link">← Back to {{ lesson.course.title }}</a>
+        <h1>Edit Chapter</h1>
+    </div>
+    
+    <form id="lesson-form" action="{{ url_for('update_chapter', lesson_id=lesson.id) }}" method="post" enctype="multipart/form-data">
+        <div class="form-group">
+            <label for="title">Chapter Title</label>
+            <input type="text" id="title" name="title" required value="{{ lesson.title }}">
+        </div>
+
+        <div class="form-group">
+            <label for="script">Lesson Script</label>
+            <textarea id="script" name="script" rows="20" placeholder="Write your lesson script here...">{{ lesson.raw_script }}</textarea>
+        </div>
+        
+        <div class="form-group" style="margin-top: 20px;">
+            <label>Tag Cheatsheet</label>
+            <div class="instructions">
+                <b>Use these tags in the script above:</b><br>
+                <code>[QUESTION: Your question? OPTIONS: A) Opt 1, B) Opt 2... ANSWER: B]</code><br>
+                <code>[QUESTION_SA: Your question? KEYWORDS: concept1, concept2]</code><br>
+                <small>Note: Image tags are not supported in this version.</small>
+            </div>
+        </div>
+
+        <button type="submit">Update Chapter</button>
+    </form>
+{% endblock %}
