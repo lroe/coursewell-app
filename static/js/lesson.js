@@ -2,14 +2,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatBox = document.getElementById('chat-box');
     const inputArea = document.getElementById('input-area');
     const systemMessage = document.getElementById('system-message');
-    
-    // Get the Q&A input elements
     const qnaInput = document.getElementById('qna-input');
     const sendQnaBtn = document.getElementById('send-qna-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const deleteLastBtn = document.getElementById('delete-last-btn');
 
-    let currentStep = 0;
     let isWaitingForResponse = false;
-    let chatHistory = [];
+    let localChatHistory = []; // Used only for local rendering, not as the source of truth
 
     // --- Q&A Input Logic ---
     function sendQuestion() {
@@ -17,7 +16,6 @@ document.addEventListener('DOMContentLoaded', () => {
         const question = qnaInput.value.trim();
         if (question !== "") {
             addMessage(question, 'student');
-            updateHistory('user', question);
             postToChat(question, 'QNA');
             qnaInput.value = '';
         }
@@ -31,17 +29,75 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // --- Message and History Functions ---
+    // --- Chat Control Button Logic ---
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+            if (isWaitingForResponse) return;
+            if (confirm('Are you sure you want to reset this entire conversation? Your progress in this chapter will be lost.')) {
+                isWaitingForResponse = true;
+                systemMessage.innerText = 'Resetting...';
+                systemMessage.style.display = 'block';
+                fetch('/chat/reset', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ lesson_id: LESSON_ID })
+                }).then(res => res.json()).then(data => {
+                    if (data.success) {
+                        window.location.reload();
+                    } else {
+                        alert('Could not reset conversation.');
+                        isWaitingForResponse = false;
+                        systemMessage.style.display = 'none';
+                    }
+                });
+            }
+        });
+    }
+
+    if (deleteLastBtn) {
+        deleteLastBtn.addEventListener('click', async () => {
+            if (isWaitingForResponse) return;
+            isWaitingForResponse = true;
+            systemMessage.innerText = 'Deleting...';
+            systemMessage.style.display = 'block';
+
+            const response = await fetch('/chat/delete_last_turn', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lesson_id: LESSON_ID })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                renderChatHistory(data.new_history);
+                showContinueButton();
+            } else {
+                alert(data.message || 'Could not delete the last turn.');
+            }
+
+            isWaitingForResponse = false;
+            systemMessage.style.display = 'none';
+        });
+    }
+    
+    // --- Rendering and UI Functions ---
+    function renderChatHistory(historyList) {
+        chatBox.innerHTML = '';
+        localChatHistory = historyList || [];
+        localChatHistory.forEach(message => {
+            const sender = message.role === 'user' ? 'student' : 'tutor';
+            // Gemini uses 'model' for the tutor role
+            const text = message.parts && message.parts.length > 0 ? message.parts[0].text : '';
+            addMessage(text, sender);
+        });
+    }
+
     function addMessage(text, sender) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}-message`;
         messageDiv.innerHTML = text.replace(/\n/g, '<br>');
         chatBox.appendChild(messageDiv);
         chatBox.scrollTop = chatBox.scrollHeight;
-    }
-
-    function updateHistory(role, text) {
-        chatHistory.push({ role: role, parts: [{ text: text }] });
     }
 
     function addMediaMessage(url, alt) {
@@ -55,7 +111,6 @@ document.addEventListener('DOMContentLoaded', () => {
         chatBox.scrollTop = chatBox.scrollHeight;
     }
 
-    // --- Dynamic UI Rendering ---
     function showMCQOptions(questionData) {
         inputArea.innerHTML = '';
         const questionText = document.createElement('p');
@@ -73,7 +128,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (isWaitingForResponse) return;
                 const answerText = `${key}: ${questionData.options[key]}`;
                 addMessage(answerText, 'student');
-                updateHistory('user', `Selected answer: ${answerText}`);
                 postToChat(key, 'LESSON_FLOW');
             });
             optionsContainer.appendChild(button);
@@ -93,17 +147,35 @@ document.addEventListener('DOMContentLoaded', () => {
         inputArea.appendChild(answerTextarea);
 
         const submitButton = document.createElement('button');
-        submitButton.className = 'btn btn-primary';
+        submitButton.className = 'btn';
         submitButton.innerText = 'Submit Answer';
         submitButton.addEventListener('click', () => {
             if (isWaitingForResponse) return;
             const answer = answerTextarea.value.trim();
             if (answer === "") { alert("Please type an answer."); return; }
             addMessage(answer, 'student');
-            updateHistory('user', answer);
             postToChat(answer, 'LESSON_FLOW');
         });
         inputArea.appendChild(submitButton);
+    }
+    
+    function showContinueButton() {
+        inputArea.innerHTML = '';
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.textAlign = 'right';
+
+        const continueButton = document.createElement('button');
+        continueButton.innerText = 'Continue';
+        continueButton.className = 'btn btn-primary'; 
+
+        continueButton.addEventListener('click', () => {
+            if (isWaitingForResponse) return;
+            addMessage('Continue', 'student');
+            postToChat('Continue', 'LESSON_FLOW');
+        });
+
+        buttonContainer.appendChild(continueButton);
+        inputArea.appendChild(buttonContainer);
     }
 
     // --- Core Chat Function ---
@@ -114,14 +186,11 @@ document.addEventListener('DOMContentLoaded', () => {
         qnaInput.disabled = true;
         sendQnaBtn.disabled = true;
         
-        // Always clear the dynamic input area before a new turn
         inputArea.innerHTML = ''; 
 
         const requestBody = {
             lesson_id: LESSON_ID,
-            step_index: currentStep,
             user_input: userInput,
-            chat_history: chatHistory,
             request_type: requestType
         };
 
@@ -138,35 +207,32 @@ document.addEventListener('DOMContentLoaded', () => {
         qnaInput.disabled = false;
         sendQnaBtn.disabled = false;
 
-        if (data.feedback) { addMessage(data.feedback, 'tutor'); updateHistory('model', data.feedback); }
+        // Render new messages from the backend
+        if (data.feedback) { addMessage(data.feedback, 'tutor'); }
         if (data.media_url) { addMediaMessage(data.media_url, "Lesson media"); }
-        if (data.tutor_text) { addMessage(data.tutor_text, 'tutor'); updateHistory('model', data.tutor_text); }
+        if (data.tutor_text) { addMessage(data.tutor_text, 'tutor'); }
         
         if (Object.keys(data).length === 1 && data.next_step) {
-             currentStep = data.next_step;
              postToChat(null, 'LESSON_FLOW');
              return;
         }
+        
+        let nextInteractionScheduled = false;
 
         if (data.is_qna_response) {
-             // After a Q&A, we now explicitly show the continue button
-             // so the user can resume the lesson flow.
-             const continueButton = document.createElement('button');
-             continueButton.innerText = 'Continue';
-             continueButton.className = 'btn btn-primary'; 
-             continueButton.addEventListener('click', () => {
-                 if (isWaitingForResponse) return;
-                 addMessage('Continue', 'student');
-                 updateHistory('user', 'Continue');
-                 postToChat('Continue', 'LESSON_FLOW');
-             });
-             inputArea.appendChild(continueButton);
+             showContinueButton();
              return; 
         }
 
-        let nextInteractionScheduled = false;
         if (data.is_lesson_end) {
-            if (data.next_chapter_url) {
+            inputArea.innerHTML = ''; // Clear for final buttons
+            if (data.certificate_url) {
+                const certLink = document.createElement('a');
+                certLink.href = data.certificate_url;
+                certLink.innerText = 'View Your Certificate!';
+                certLink.className = 'btn btn-primary';
+                inputArea.appendChild(certLink);
+            } else if (data.next_chapter_url) {
                 const nextChapterButton = document.createElement('a');
                 nextChapterButton.href = data.next_chapter_url;
                 nextChapterButton.innerText = 'Go to Next Chapter';
@@ -183,34 +249,26 @@ document.addEventListener('DOMContentLoaded', () => {
             nextInteractionScheduled = true;
         }
 
-        // If no other button was scheduled, it means we just delivered content and should
-        // now show the "Continue" button in the designated input area.
-        // REPLACE WITH THIS BLOCK
         if (!nextInteractionScheduled) {
-            // Create a container div that will align its content to the right
-            const buttonContainer = document.createElement('div');
-            buttonContainer.style.textAlign = 'right';
-
-            const continueButton = document.createElement('button');
-            continueButton.innerText = 'Continue';
-            continueButton.className = 'btn btn-primary';
-            // REMOVED: continueButton.style.width = '100%';
-
-            continueButton.addEventListener('click', () => {
-                if (isWaitingForResponse) return;
-                addMessage('Continue', 'student');
-                updateHistory('user', 'Continue');
-                postToChat('Continue', 'LESSON_FLOW');
-            });
-
-            // Add the button to the container, and the container to the input area
-            buttonContainer.appendChild(continueButton);
-            inputArea.appendChild(buttonContainer);
+            showContinueButton();
         }
-        
-        currentStep = data.next_step;
     }
 
-    // Initial call to start the lesson
-    postToChat(null, 'LESSON_FLOW');
+    // --- Initialization Logic ---
+    function initializeLesson() {
+        if (initialHistoryRecord && initialHistoryRecord.history_json) {
+            const savedHistory = JSON.parse(initialHistoryRecord.history_json);
+            if (savedHistory && savedHistory.length > 0) {
+                renderChatHistory(savedHistory);
+                showContinueButton();
+            } else {
+                postToChat(null, 'LESSON_FLOW');
+            }
+        } else {
+            postToChat(null, 'LESSON_FLOW');
+        }
+    }
+
+    // Initial call to start or resume the lesson
+    initializeLesson();
 });

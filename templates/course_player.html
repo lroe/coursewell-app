@@ -4,13 +4,19 @@
     <meta charset="UTF-8">
     <title>{{ current_lesson.title }} | {{ course.title }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .chat-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+    </style>
 </head>
 <body class="course-player-body">
 
     <div class="course-player-container">
         <!-- Left Sidebar: Chapter Navigation -->
         <div class="sidebar">
-            <!-- 1. ADDED "BACK" BUTTON -->
             <div style="margin-bottom: 20px;">
                 <a href="{{ url_for('dashboard') }}" class="btn btn-secondary" style="width: 100%;">← Back to My Shelf</a>
             </div>
@@ -42,6 +48,14 @@
         <div class="main-chat-area">
             <div class="chat-header">
                 <h2>{{ current_lesson.title }}</h2>
+                <!-- Chat Control Buttons -->
+                <div class="chat-controls" style="margin-left: auto; display: flex; gap: 10px;">
+                    {# These controls only make sense for enrolled students whose progress is saved #}
+                    {% if enrollment %}
+                        <button id="delete-last-btn" class="btn btn-secondary" title="Delete Last Turn">↶</button>
+                        <button id="reset-btn" class="btn btn-danger" title="Reset Conversation">Reset</button>
+                    {% endif %}
+                </div>
             </div>
             <div id="chat-box" class="chat-box">
                 <!-- Messages will appear here -->
@@ -52,10 +66,9 @@
                 <p id="system-message" class="system-message">Guidee is thinking...</p>
             </div>
             
-            <!-- 2. REPLACED Q&A BUTTON WITH NEW INPUT FORM -->
+            <!-- Q&A input form -->
             <div class="chat-input-container">
                 <input type="text" id="qna-input" placeholder="Ask a question..." autocomplete="off">
-                
                 <button id="send-qna-btn" class="btn">➤</button>
             </div>
         </div>
@@ -64,6 +77,8 @@
     <script>
         const COURSE_ID = "{{ course.id }}";
         const LESSON_ID = "{{ current_lesson.id }}";
+        // Load initial history from the backend, using the safe `tojson` filter
+        const initialHistoryRecord = {{ initial_history | tojson }};
     </script>
     <script src="{{ url_for('static', filename='js/lesson.js') }}"></script>
 </body>
