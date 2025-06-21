@@ -51,7 +51,10 @@ class Course(db.Model):
     is_published = db.Column(db.Boolean, nullable=False, default=False)
     enrollees = db.relationship('Enrollment', back_populates='course', lazy='dynamic', cascade="all, delete-orphan")
     lessons = db.relationship('Lesson', backref='course', lazy=True, cascade="all, delete-orphan", order_by="Lesson.chapter_number")
+    description = db.Column(db.Text, nullable=True)
+    thumbnail_url = db.Column(db.String(255), nullable=True)
     reviews = db.relationship('Review', backref='course', lazy='dynamic')
+    shareable_link_id = db.Column(db.String(36), unique=True, nullable=True)
 
     @property
     def average_rating(self):
@@ -572,6 +575,73 @@ def certificate_view(course_id):
         return redirect(url_for('course_player', course_id=course.id))
     existing_review = Review.query.filter_by(user_id=current_user.id, course_id=course.id).first()
     return render_template('certificate.html', enrollment=enrollment, existing_review=existing_review)
+
+# In app.py
+
+@app.route('/course/<string:course_id>/update_details', methods=['POST'])
+@login_required
+def update_course_details(course_id):
+    course = Course.query.get_or_404(course_id)
+    if course.creator.id != current_user.id:
+        abort(403)
+        
+    course.description = request.form.get('description')
+    
+    if 'thumbnail' in request.files:
+        file = request.files['thumbnail']
+        if file.filename != '':
+            filename = str(uuid.uuid4()) + os.path.splitext(file.filename)[1]
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(filepath)
+            course.thumbnail_url = url_for('static', filename=f'uploads/{filename}')
+
+    db.session.commit()
+    flash('Course details updated successfully!', 'success')
+    return redirect(url_for('manage_course', course_id=course.id))
+
+# In app.py
+
+@app.route('/course/<string:course_id>/details')
+def course_detail_page(course_id):
+    course = Course.query.get_or_404(course_id)
+    # Check if the course is private and if the user has access
+    if not course.is_published and (not current_user.is_authenticated or course.creator.id != current_user.id):
+        # We will enhance this later for private links
+        abort(404)
+    return render_template('course_detail.html', course=course)
+
+# In app.py
+
+@app.route('/course/<string:course_id>/update_publish_status', methods=['POST'])
+@login_required
+def update_publish_status(course_id):
+    course = Course.query.get_or_404(course_id)
+    if course.creator.id != current_user.id: abort(403)
+    
+    status = request.form.get('publish_status')
+    course.is_published = (status == 'public')
+    db.session.commit()
+    
+    flash('Publishing status updated!', 'success')
+    return redirect(url_for('manage_course', course_id=course.id))
+
+@app.route('/course/<string:course_id>/generate_link', methods=['POST'])
+@login_required
+def generate_share_link(course_id):
+    course = Course.query.get_or_404(course_id)
+    if course.creator.id != current_user.id: abort(403)
+    
+    if not course.shareable_link_id:
+        course.shareable_link_id = str(uuid.uuid4())
+        db.session.commit()
+        
+    return redirect(url_for('manage_course', course_id=course.id))
+
+@app.route('/share/<string:link_id>')
+def shared_course_view(link_id):
+    course = Course.query.filter_by(shareable_link_id=link_id).first_or_404()
+    # This link grants access to the detail page regardless of login status
+    return render_template('course_detail.html', course=course)
 
 
 if __name__ == '__main__':

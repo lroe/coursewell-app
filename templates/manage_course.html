@@ -5,6 +5,47 @@
         <a href="{{ url_for('dashboard') }}" class="back-link">← Back to Dashboard</a>
         <h1>Manage: {{ course.title }}</h1>
     </div>
+    {# In templates/manage_course.html, maybe after the page-header div #}
+
+<hr class="section-divider">
+<h3>Course Details</h3>
+<form action="{{ url_for('update_course_details', course_id=course.id) }}" method="post" enctype="multipart/form-data">
+    <div class="form-group">
+        <label for="description">Course Description</label>
+        <textarea name="description" id="description" rows="4" placeholder="Briefly describe what students will learn in this course.">{{ course.description or '' }}</textarea>
+    </div>
+    <div class="form-group">
+        <label for="thumbnail">Course Thumbnail Image</label>
+        {% if course.thumbnail_url %}
+            <img src="{{ course.thumbnail_url }}" alt="Current thumbnail" style="max-width: 200px; display: block; margin-bottom: 10px; border-radius: 5px;">
+        {% endif %}
+        <input type="file" name="thumbnail" id="thumbnail" accept="image/*">
+    </div>
+    <button type="submit" class="btn">Update Details</button>
+</form>
+
+<h3>Publishing Status</h3>
+<form action="{{ url_for('update_publish_status', course_id=course.id) }}" method="post">
+    <select name="publish_status">
+        <option value="private" {% if not course.is_published %}selected{% endif %}>Private (Only you can see this)</option>
+        <option value="public" {% if course.is_published %}selected{% endif %}>Public (Visible on Explore page)</option>
+    </select>
+    <button type="submit" class="btn">Save Status</button>
+</form>
+
+{% if not course.is_published %}
+<div style="margin-top: 20px;">
+    <strong>Share your private course:</strong>
+    {% if course.shareable_link_id %}
+        <p>Anyone with this link can view your course details and enroll:</p>
+        <input type="text" readonly value="{{ url_for('shared_course_view', link_id=course.shareable_link_id, _external=True) }}">
+    {% else %}
+        <form action="{{ url_for('generate_share_link', course_id=course.id) }}" method="post">
+            <button type="submit" class="btn btn-secondary">Generate Private Link</button>
+        </form>
+    {% endif %}
+</div>
+{% endif %}
 
     <div class="course-management-actions">
         <a href="{{ url_for('add_chapter_page', course_id=course.id) }}" class="btn btn-primary">Add New Chapter</a>
