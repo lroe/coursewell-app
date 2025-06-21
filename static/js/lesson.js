@@ -2,22 +2,36 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatBox = document.getElementById('chat-box');
     const inputArea = document.getElementById('input-area');
     const systemMessage = document.getElementById('system-message');
-    const qnaButton = document.getElementById('ask-qna-btn');
+    
+    // Get the Q&A input elements
+    const qnaInput = document.getElementById('qna-input');
+    const sendQnaBtn = document.getElementById('send-qna-btn');
 
     let currentStep = 0;
     let isWaitingForResponse = false;
     let chatHistory = [];
 
-    qnaButton.addEventListener('click', () => {
+    // --- Q&A Input Logic ---
+    function sendQuestion() {
         if (isWaitingForResponse) return;
-        const question = prompt("What is your question about the lesson so far?");
-        if (question && question.trim() !== "") {
+        const question = qnaInput.value.trim();
+        if (question !== "") {
             addMessage(question, 'student');
             updateHistory('user', question);
             postToChat(question, 'QNA');
+            qnaInput.value = '';
+        }
+    }
+
+    sendQnaBtn.addEventListener('click', sendQuestion);
+    qnaInput.addEventListener('keypress', function(event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            sendQuestion();
         }
     });
 
+    // --- Message and History Functions ---
     function addMessage(text, sender) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}-message`;
@@ -36,23 +50,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const img = document.createElement('img');
         img.src = url;
         img.alt = alt;
-        img.style.maxWidth = '100%';
-        img.style.borderRadius = '8px';
-        img.style.marginTop = '10px';
         messageDiv.appendChild(img);
         chatBox.appendChild(messageDiv);
         chatBox.scrollTop = chatBox.scrollHeight;
     }
 
+    // --- Dynamic UI Rendering ---
     function showMCQOptions(questionData) {
         inputArea.innerHTML = '';
         const questionText = document.createElement('p');
         questionText.innerText = questionData.question;
         inputArea.appendChild(questionText);
+
         const optionsContainer = document.createElement('div');
         optionsContainer.className = 'options-container';
         for (const key in questionData.options) {
             const button = document.createElement('button');
+            button.className = 'btn btn-secondary';
             button.innerText = `${key}: ${questionData.options[key]}`;
             button.dataset.answer = key;
             button.addEventListener('click', () => {
@@ -72,11 +86,14 @@ document.addEventListener('DOMContentLoaded', () => {
         const questionText = document.createElement('p');
         questionText.innerText = questionData.question;
         inputArea.appendChild(questionText);
+
         const answerTextarea = document.createElement('textarea');
         answerTextarea.rows = 3;
         answerTextarea.placeholder = "Type your answer here...";
         inputArea.appendChild(answerTextarea);
+
         const submitButton = document.createElement('button');
+        submitButton.className = 'btn btn-primary';
         submitButton.innerText = 'Submit Answer';
         submitButton.addEventListener('click', () => {
             if (isWaitingForResponse) return;
@@ -89,13 +106,16 @@ document.addEventListener('DOMContentLoaded', () => {
         inputArea.appendChild(submitButton);
     }
 
+    // --- Core Chat Function ---
     async function postToChat(userInput = null, requestType = 'LESSON_FLOW') {
         isWaitingForResponse = true;
         systemMessage.innerText = 'Guidee is thinking...';
         systemMessage.style.display = 'block';
-        if (requestType === 'LESSON_FLOW') {
-            inputArea.innerHTML = '';
-        }
+        qnaInput.disabled = true;
+        sendQnaBtn.disabled = true;
+        
+        // Always clear the dynamic input area before a new turn
+        inputArea.innerHTML = ''; 
 
         const requestBody = {
             lesson_id: LESSON_ID,
@@ -104,7 +124,6 @@ document.addEventListener('DOMContentLoaded', () => {
             chat_history: chatHistory,
             request_type: requestType
         };
-        console.log("--> Sending request to /chat:", requestBody);
 
         const response = await fetch('/chat', {
             method: 'POST',
@@ -113,37 +132,45 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         const data = await response.json();
-        console.log("<-- Received response from /chat:", data);
 
         isWaitingForResponse = false;
         systemMessage.style.display = 'none';
+        qnaInput.disabled = false;
+        sendQnaBtn.disabled = false;
 
         if (data.feedback) { addMessage(data.feedback, 'tutor'); updateHistory('model', data.feedback); }
         if (data.media_url) { addMediaMessage(data.media_url, "Lesson media"); }
         if (data.tutor_text) { addMessage(data.tutor_text, 'tutor'); updateHistory('model', data.tutor_text); }
+        
+        if (Object.keys(data).length === 1 && data.next_step) {
+             currentStep = data.next_step;
+             postToChat(null, 'LESSON_FLOW');
+             return;
+        }
 
-        // --- THIS IS THE FIX ---
-        // We no longer automatically re-call postToChat here.
-        // The logic will now naturally fall through to the end, where it will
-        // correctly create a "Continue" button, putting the user in control.
         if (data.is_qna_response) {
-            // No action needed, just let the function continue.
+             // After a Q&A, we now explicitly show the continue button
+             // so the user can resume the lesson flow.
+             const continueButton = document.createElement('button');
+             continueButton.innerText = 'Continue';
+             continueButton.className = 'btn btn-primary'; 
+             continueButton.addEventListener('click', () => {
+                 if (isWaitingForResponse) return;
+                 addMessage('Continue', 'student');
+                 updateHistory('user', 'Continue');
+                 postToChat('Continue', 'LESSON_FLOW');
+             });
+             inputArea.appendChild(continueButton);
+             return; 
         }
 
         let nextInteractionScheduled = false;
         if (data.is_lesson_end) {
-            if (data.certificate_url) {
-                const certButton = document.createElement('a');
-                certButton.href = data.certificate_url;
-                certButton.innerText = 'View Your Certificate!';
-                certButton.className = 'btn btn-primary';
-                certButton.style.marginTop = '10px';
-                inputArea.appendChild(certButton);
-            } else if (data.next_chapter_url) {
-                const nextChapterButton = document.createElement('button');
+            if (data.next_chapter_url) {
+                const nextChapterButton = document.createElement('a');
+                nextChapterButton.href = data.next_chapter_url;
                 nextChapterButton.innerText = 'Go to Next Chapter';
                 nextChapterButton.className = 'btn btn-primary';
-                nextChapterButton.addEventListener('click', () => { window.location.href = data.next_chapter_url; });
                 inputArea.appendChild(nextChapterButton);
             }
             nextInteractionScheduled = true;
@@ -156,22 +183,34 @@ document.addEventListener('DOMContentLoaded', () => {
             nextInteractionScheduled = true;
         }
 
-        // If the interaction isn't a question or the end of the lesson, show "Continue"
-        // This will now correctly run after a Q&A response.
+        // If no other button was scheduled, it means we just delivered content and should
+        // now show the "Continue" button in the designated input area.
+        // REPLACE WITH THIS BLOCK
         if (!nextInteractionScheduled) {
+            // Create a container div that will align its content to the right
+            const buttonContainer = document.createElement('div');
+            buttonContainer.style.textAlign = 'right';
+
             const continueButton = document.createElement('button');
             continueButton.innerText = 'Continue';
+            continueButton.className = 'btn btn-primary';
+            // REMOVED: continueButton.style.width = '100%';
+
             continueButton.addEventListener('click', () => {
                 if (isWaitingForResponse) return;
                 addMessage('Continue', 'student');
                 updateHistory('user', 'Continue');
                 postToChat('Continue', 'LESSON_FLOW');
             });
-            inputArea.appendChild(continueButton);
+
+            // Add the button to the container, and the container to the input area
+            buttonContainer.appendChild(continueButton);
+            inputArea.appendChild(buttonContainer);
         }
         
         currentStep = data.next_step;
     }
 
+    // Initial call to start the lesson
     postToChat(null, 'LESSON_FLOW');
 });
