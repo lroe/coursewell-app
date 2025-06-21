@@ -372,22 +372,37 @@ def explore():
     return render_template('explore.html', courses=courses)
 
 @app.route('/course/<string:course_id>')
+@login_required # It's best practice to require login for the player
 def course_player(course_id):
     course = Course.query.get_or_404(course_id)
-    if not course.is_published and (not current_user.is_authenticated or course.creator.id != current_user.id): abort(404)
+    
+    # --- REVISED PERMISSION CHECK ---
+    # Allow access if:
+    # 1. The course is published, OR
+    # 2. The user is the creator, OR
+    # 3. The user is enrolled in the course.
+    is_public = course.is_published
+    is_creator = (course.creator.id == current_user.id)
+    is_enrolled = current_user.is_enrolled(course)
+
+    if not (is_public or is_creator or is_enrolled):
+        abort(404) # Deny access if none of the conditions are met.
+
     if not course.lessons:
         if current_user.is_authenticated and current_user.id == course.user_id:
             flash('This course has no chapters yet. Add one to enable the preview.', 'info')
             return redirect(url_for('manage_course', course_id=course.id))
-        return "This course has no content yet.", 404
-    
+        # This part is unlikely to be reached now due to the enrollment check, but good to have
+        flash("This course has no content yet.", "warning")
+        return redirect(url_for('dashboard'))
+
+    enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=course.id).first()
+    # The creator won't have an enrollment object, so we handle that case
     chapter_to_start = 1
-    if current_user.is_authenticated:
-        enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=course.id).first()
-        if enrollment:
-            chapter_to_start = enrollment.last_completed_chapter_number + 1
-            if chapter_to_start > len(course.lessons): chapter_to_start = len(course.lessons)
-            
+    if enrollment:
+        chapter_to_start = enrollment.last_completed_chapter_number + 1
+        if chapter_to_start > len(course.lessons): chapter_to_start = len(course.lessons)
+
     return redirect(url_for('student_chapter_view', course_id=course.id, chapter_number=chapter_to_start))
 
 @app.route('/course/<string:course_id>/<int:chapter_number>')
