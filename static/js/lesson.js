@@ -19,24 +19,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function addMessage(text, sender) {
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${sender}-message`;
-    
-    // ADD THIS IF-STATEMENT
-    // If the message is from the tutor and contains HTML, treat it as the main content
-    if (sender === 'tutor' && /<[a-z][\s\S]*>/i.test(text)) {
-        messageDiv.classList.add('main-content-block');
-        // Use the reader theme for consistent styling
-        const styleLink = document.createElement('link');
-        styleLink.rel = 'stylesheet';
-        styleLink.href = '/static/css/reader_theme.css';
-        messageDiv.appendChild(styleLink);
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${sender}-message`;
+        messageDiv.innerHTML = text.replace(/\n/g, '<br>');
+        chatBox.appendChild(messageDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
     }
-    
-    messageDiv.innerHTML += text; // Use += to not overwrite the style link
-    chatBox.appendChild(messageDiv);
-    chatBox.scrollTop = chatBox.scrollHeight;
-}
 
     function updateHistory(role, text) {
         chatHistory.push({ role: role, parts: [{ text: text }] });
@@ -48,6 +36,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const img = document.createElement('img');
         img.src = url;
         img.alt = alt;
+        img.style.maxWidth = '100%';
+        img.style.borderRadius = '8px';
+        img.style.marginTop = '10px';
         messageDiv.appendChild(img);
         chatBox.appendChild(messageDiv);
         chatBox.scrollTop = chatBox.scrollHeight;
@@ -131,14 +122,16 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.media_url) { addMediaMessage(data.media_url, "Lesson media"); }
         if (data.tutor_text) { addMessage(data.tutor_text, 'tutor'); updateHistory('model', data.tutor_text); }
 
+        // --- THIS IS THE FIX ---
+        // We no longer automatically re-call postToChat here.
+        // The logic will now naturally fall through to the end, where it will
+        // correctly create a "Continue" button, putting the user in control.
         if (data.is_qna_response) {
-            postToChat(null, 'LESSON_FLOW');
-            return;
+            // No action needed, just let the function continue.
         }
 
         let nextInteractionScheduled = false;
         if (data.is_lesson_end) {
-            // Handle course completion and certificate link
             if (data.certificate_url) {
                 const certButton = document.createElement('a');
                 certButton.href = data.certificate_url;
@@ -146,14 +139,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 certButton.className = 'btn btn-primary';
                 certButton.style.marginTop = '10px';
                 inputArea.appendChild(certButton);
-
             } else if (data.next_chapter_url) {
                 const nextChapterButton = document.createElement('button');
                 nextChapterButton.innerText = 'Go to Next Chapter';
                 nextChapterButton.className = 'btn btn-primary';
-                nextChapterButton.addEventListener('click', () => {
-                    window.location.href = data.next_chapter_url;
-                });
+                nextChapterButton.addEventListener('click', () => { window.location.href = data.next_chapter_url; });
                 inputArea.appendChild(nextChapterButton);
             }
             nextInteractionScheduled = true;
@@ -166,21 +156,21 @@ document.addEventListener('DOMContentLoaded', () => {
             nextInteractionScheduled = true;
         }
 
+        // If the interaction isn't a question or the end of the lesson, show "Continue"
+        // This will now correctly run after a Q&A response.
         if (!nextInteractionScheduled) {
             const continueButton = document.createElement('button');
             continueButton.innerText = 'Continue';
             continueButton.addEventListener('click', () => {
                 if (isWaitingForResponse) return;
-                    const continueText = 'Continue';
-                    addMessage(continueText, 'student'); // Show "Continue" in the chat
-                    updateHistory('user', continueText);
-                    postToChat(continueText, 'LESSON_FLOW'); // Send it as input
+                addMessage('Continue', 'student');
+                updateHistory('user', 'Continue');
+                postToChat('Continue', 'LESSON_FLOW');
             });
             inputArea.appendChild(continueButton);
         }
         
         currentStep = data.next_step;
-    
     }
 
     postToChat(null, 'LESSON_FLOW');

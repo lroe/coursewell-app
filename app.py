@@ -111,12 +111,21 @@ TUTOR_PROMPT_TEMPLATE = {
     "RETRY": "You are a Socratic tutor. The student answered incorrectly. The lesson text with the answer is: --- {} ---. Based ONLY on this text, provide a short, simple hint or a leading question to help them. Do not invent new analogies.",
     "FEEDBACK_AND_PROCEED": "The student just answered a question correctly. Your response should start with a positive confirmation (like 'Exactly!' or 'Great job!') and then seamlessly transition into teaching the following new concept. Here is the new concept: --- {} ---",
     "QNA": """
-You are a helpful teaching assistant. A student has interrupted the lesson to ask a question.
-Using ONLY the provided lesson context below, answer the student's question.
-If the answer is not in the context, politely state that you can only answer questions about the material covered so far.
-Do not use any outside knowledge. Keep your answer concise.
-Lesson Context: --- {} ---
-Student's Question: --- {} ---
+You are an intelligent teaching assistant. A student has a question.
+Your knowledge is strictly limited to the following "Full Lesson Script".
+The script contains text and image tags like [IMAGE: alt="description"].
+
+Your Task:
+1. Read the student's question.
+2. Analyze the "Full Lesson Script" to find the answer.
+3. **If the student is asking to see an image mentioned in the script (e.g., "show me the capybara", "can I see the image?"), your response MUST be ONLY the following machine-readable tag: `[RETRIEVE_IMAGE: "description"]`, where "description" is the exact alt text from the corresponding [IMAGE] tag in the script.**
+4. For any other question, answer it normally based on the script's text content. If you cannot answer, say so politely.
+
+---
+Full Lesson Script:
+{lesson_script}
+---
+Student's Question: {user_question}
 """,
     "QUESTION": "Okay, time for a quick question to check your understanding: {}"
 }
@@ -407,10 +416,31 @@ def chat():
     response_data = {}
 
     if request_type == 'QNA':
-        context_list = [step.get('text', '') for i, step in enumerate(lesson_data['steps']) if i < step_index and step.get('type') == 'CONTENT']
-        lesson_context = "\n".join(context_list) or "No context available yet."
-        qna_prompt = TUTOR_PROMPT_TEMPLATE['QNA'].format(lesson_context, user_input)
-        response_data['tutor_text'] = get_tutor_response(qna_prompt)
+        qna_prompt = TUTOR_PROMPT_TEMPLATE['QNA'].format(
+            lesson_script=lesson.raw_script,
+            user_question=user_input
+        )
+        ai_response = get_tutor_response(qna_prompt)
+
+        if ai_response.strip().startswith('[RETRIEVE_IMAGE:'):
+            try:
+                alt_text_to_find = ai_response.split('"')[1]
+                found_url = None
+                for step in lesson_data.get('steps', []):
+                    if step.get('type') == 'MEDIA' and step.get('alt_text') == alt_text_to_find:
+                        found_url = step.get('media_url')
+                        break
+                
+                if found_url:
+                    response_data['tutor_text'] = f"Of course, here is the image of '{alt_text_to_find}':"
+                    response_data['media_url'] = found_url
+                else:
+                    response_data['tutor_text'] = "I found a mention of that image, but I couldn't retrieve the picture. Sorry about that."
+            except IndexError:
+                 response_data['tutor_text'] = "I had a little trouble retrieving that image. Please try asking in a different way."
+        else:
+            response_data['tutor_text'] = ai_response
+
         response_data['is_qna_response'] = True
         response_data['next_step'] = step_index
         return jsonify(response_data)
@@ -469,10 +499,10 @@ def chat():
     
     elif step_type == 'MEDIA':
         if not current_step.get('media_url'):
-            print(f"Warning: MEDIA step at index {step_index} is missing a media_url.")
+            print(f"Warning: MEDIA step at index {step_index} is missing a media_url. Auto-advancing.")
             response_data['next_step'] = step_index + 1
-            # Skip this broken step by returning an empty response, frontend will call again
-            return jsonify(response_data) 
+            # Return an empty object to signal the frontend to immediately call again for the next step.
+            return jsonify(response_data)
             
         full_prompt = TUTOR_PROMPT_TEMPLATE['MEDIA'].format(current_step.get('alt_text', ''))
         response_data['tutor_text'] = get_tutor_response(full_prompt)
@@ -515,7 +545,7 @@ def reviews_page(course_id):
 @login_required
 def submit_review(course_id):
     course = Course.query.get_or_404(course_id)
-    enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=course.id).first()
+    enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=course_id).first()
     if not enrollment or not enrollment.completed_at:
         flash("You must complete a course before reviewing it.", "warning")
         return redirect(url_for('explore'))
