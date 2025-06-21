@@ -6,27 +6,35 @@
         <h1>Add a New Chapter</h1>
     </div>
     
-    <form id="lesson-form" action="{{ url_for('save_chapter', course_id=course.id) }}" method="post">
+    <form id="lesson-form" action="{{ url_for('save_chapter', course_id=course.id) }}" method="post" enctype="multipart/form-data">
         <div class="form-group">
             <label for="title">Chapter Title</label>
-            <input type="text" id="title" name="title" required placeholder="e.g., Introduction to the Water Cycle">
+            <input type="text" id="title" name="title" required placeholder="e.g., Introduction to Capybaras">
         </div>
 
-        <div class="form-group">
-            <label for="script">Lesson Script</label>
-            <textarea id="script" name="script" rows="20" placeholder="Write your lesson script here..."></textarea>
+        <div class="editor-toolbar">
+            <button type="button" id="add-image-btn" class="btn btn-secondary">Add Image</button>
+        </div>
+
+        <div id="lesson-editor" contenteditable="true" spellcheck="false" class="codex-editor">
+            <p>Start writing your chapter here...</p>
         </div>
         
         <div class="form-group" style="margin-top: 20px;">
             <label>Tag Cheatsheet</label>
             <div class="instructions">
-                <b>Use these tags in the script above:</b><br>
+                <b>Use these tags in the editor above:</b><br>
+                <code>[IMAGE: alt="A description of the image"]</code> (Use the button above)<br>
                 <code>[QUESTION: Your question? OPTIONS: A) Opt 1, B) Opt 2... ANSWER: B]</code><br>
-                <code>[QUESTION_SA: Your question? KEYWORDS: concept1, concept2]</code><br>
-                <small>Note: Image tags are not supported in this version.</small>
+                <code>[QUESTION_SA: Your question? KEYWORDS: concept1, concept2]</code>
             </div>
         </div>
+
+        <input type="file" id="image-upload-input" name="media" style="display: none;" accept="image/*" multiple>
+        <input type="hidden" id="script-input" name="script">
         
         <button type="submit">Save Chapter</button>
     </form>
+    
+    <script src="{{ url_for('static', filename='js/create.js') }}"></script>
 {% endblock %}
