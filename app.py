@@ -521,17 +521,36 @@ def chat():
     return jsonify(response_data)
 
 # --- Other Routes ---
+# In app.py
+
 @app.route('/course/<string:course_id>/enroll', methods=['POST'])
 @login_required
 def enroll_in_course(course_id):
     course = Course.query.get_or_404(course_id)
-    if not course.is_published and course.creator.id != current_user.id: abort(404)
-    if course.creator.id == current_user.id:
+    share_id = request.form.get('share_id') # Get the share_id from the form
+
+    # --- PERMISSION CHECK ---
+    # Allow enrollment if:
+    # 1. The course is published, OR
+    # 2. The user is the creator, OR
+    # 3. The user accessed via a valid share link.
+    is_public = course.is_published
+    is_creator = (current_user.is_authenticated and course.creator.id == current_user.id)
+    has_share_link = (share_id is not None and share_id == course.shareable_link_id)
+
+    if not (is_public or is_creator or has_share_link):
+        abort(404) # If none of the access conditions are met, deny access.
+
+    # --- DUPLICATION CHECK ---
+    if is_creator:
         flash("You cannot enroll in a course you've created.", "warning")
-        return redirect(url_for('explore'))
+        return redirect(url_for('course_detail_page', course_id=course.id))
+
     if current_user.is_enrolled(course):
         flash("You are already enrolled in this course.", "info")
         return redirect(url_for('course_player', course_id=course.id))
+    
+    # --- ENROLLMENT LOGIC ---
     new_enrollment = Enrollment(user=current_user, course=course)
     db.session.add(new_enrollment)
     db.session.commit()
