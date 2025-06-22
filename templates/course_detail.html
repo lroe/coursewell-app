@@ -18,7 +18,7 @@
                      <a href="{{ url_for('course_player', course_id=course.id) }}" class="btn btn-primary">Resume Learning</a>
                 {% else %}
                     <form action="{{ url_for('enroll_in_course', course_id=course.id) }}" method="post" style="display: inline;">
-                    	 <!-- FIX: Always include the share_id input. The 'or ''' handles cases where it's None. -->
+                         <!-- FIX: Always include the share_id input. The 'or ''' handles cases where it's None. -->
                         <input type="hidden" name="share_id" value="{{ course.shareable_link_id or '' }}">
                         <button type="submit" class="btn btn-primary">Enroll Now</button>
                     </form>

@@ -51,7 +51,7 @@
                 <!-- Chat Control Buttons -->
                 <div class="chat-controls" style="margin-left: auto; display: flex; gap: 10px;">
                     {# These controls only make sense for enrolled students whose progress is saved #}
-                    {% if enrollment %}
+                    {% if enrollment or (current_user.is_authenticated and course.user_id == current_user.id) %}
                         <button id="delete-last-btn" class="btn btn-secondary" title="Delete Last Turn">↶</button>
                         <button id="reset-btn" class="btn btn-danger" title="Reset Conversation">Reset</button>
                     {% endif %}
