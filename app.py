@@ -28,7 +28,6 @@ login_manager.login_view = 'login'
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# A simple in-memory cache for our RAG retrievers
 RAG_RETRIEVERS = {}
 
 # --- Database Models ---
@@ -106,9 +105,11 @@ PARSER_PROMPT = """
 You are a precise curriculum parsing agent. Your task is to convert a teacher's lesson script into a structured JSON object. You MUST follow these rules exactly.
 1. The final JSON object MUST have a single top-level key: "steps".
 2. For explanatory text, create a "CONTENT" step with a "text" key.
-3. For image tags like [IMAGE: alt="A picture."], create a "MEDIA" step with an "alt_text" key. **Do NOT include a filename or URL.**
-4. For multiple-choice questions like [QUESTION: ... OPTIONS: A)... ANSWER: B], create a "QUESTION_MCQ" step with "question", "options" (as a key-value object), and "correct_answer" keys.
-5. For short-answer questions like [QUESTION_SA: ... KEYWORDS: word1, word2, ...], create a "QUESTION_SA" step with "question" and "keywords" (as an array of strings) keys.
+3. For image tags like [IMAGE: alt="A picture."], create a "MEDIA" step with "alt_text" and a "media_type" of "image".
+4. For audio tags like [AUDIO: description="A sound."], create a "MEDIA" step with "alt_text" (using the description) and a "media_type" of "audio".
+5. For multiple-choice questions like [QUESTION: ... OPTIONS: A)... ANSWER: B], create a "QUESTION_MCQ" step.
+6. For short-answer questions like [QUESTION_SA: ... KEYWORDS: word1, word2, ...], create a "QUESTION_SA" step.
+
 Parse the following script:
 """
 GRADER_PROMPT = """
@@ -121,7 +122,6 @@ TUTOR_PROMPT_TEMPLATE = {
 You are a friendly and engaging tutor. Your task is to teach the following information to a student.
 Your goal is to be comprehensive and ensure no details are lost. Explain the provided text clearly, including all examples and specific terms mentioned.
 After explaining the content, ask a simple question to prompt the user to continue, like "Does that make sense?" or "Shall we move on?".
-Dont mention things like author, speak in first person mode.
 
 Here is the text to explain:
 ---
@@ -261,7 +261,6 @@ def chat():
             if enrollment.last_completed_chapter_number >= len(lesson.course.lessons):
                 if not enrollment.completed_at: enrollment.completed_at = datetime.datetime.utcnow()
             response_data['certificate_url'] = url_for('certificate_view', course_id=lesson.course_id)
-        # No state change needed here, we are at the end
     else:
         current_step = lesson_steps[step_index]
         step_type = current_step.get('type')
@@ -269,27 +268,25 @@ def chat():
         if step_type == 'CONTENT':
             content_chunks = [chunk for chunk in current_step.get('text', '').split('\n\n') if chunk.strip()]
             if chunk_index < len(content_chunks):
-                # We are in the middle of explaining a large content block
                 chunk_to_explain = content_chunks[chunk_index]
                 prompt = TUTOR_PROMPT_TEMPLATE['CONTENT'].format(chunk_to_explain)
                 model_response_text = get_tutor_response(prompt)
                 next_chunk_index = chunk_index + 1
             
             if next_chunk_index >= len(content_chunks):
-                # We have finished the last chunk of this content block, move to the next main step
                 next_step_index = step_index + 1
-                next_chunk_index = 0 # Reset for the next content block
+                next_chunk_index = 0
         
-        else: # Handle non-content steps (MEDIA, QUESTION)
+        else:
             if step_type == 'MEDIA':
                 response_data['media_url'] = current_step.get('media_url')
+                response_data['media_type'] = current_step.get('media_type', 'image')
                 prompt = TUTOR_PROMPT_TEMPLATE['MEDIA'].format(current_step.get('alt_text', ''))
             elif step_type in ['QUESTION_MCQ', 'QUESTION_SA']:
                 response_data['question'] = current_step
                 prompt = TUTOR_PROMPT_TEMPLATE['QUESTION'].format(current_step.get('question', ''))
             
             model_response_text = get_tutor_response(prompt)
-            # After a non-content step, we always advance the main step and reset the chunk index
             next_step_index = step_index + 1
             next_chunk_index = 0
 
@@ -315,7 +312,7 @@ def reset_conversation():
     lesson = Lesson.query.get_or_404(lesson_id)
     enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=lesson.course_id).first()
     if enrollment:
-        history_record = ChatHistory.query.filter_by(enrollment_id=enrollment.id, lesson_id=lesson_id).first()
+        history_record = ChatHistory.query.filter_by(enrollment_id=enrollment.id, lesson_id=lesson.id).first()
         if history_record:
             history_record.current_step_index = 0
             history_record.current_chunk_index = 0
@@ -329,7 +326,6 @@ def reset_conversation():
 @app.route('/chat/delete_last_turn', methods=['POST'])
 @login_required
 def delete_last_turn():
-    # This is complex with the new nested state. A simple "go back one step" is implemented.
     lesson_id = request.json.get('lesson_id')
     lesson = Lesson.query.get_or_404(lesson_id)
     enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=lesson.course_id).first()
@@ -340,8 +336,6 @@ def delete_last_turn():
                 history_record.current_chunk_index -= 1
             elif history_record.current_step_index > 0:
                 history_record.current_step_index -= 1
-                # To be perfect, we'd need to know the chunk count of the previous step.
-                # For simplicity, we restart at the beginning of the previous step.
                 history_record.current_chunk_index = 0
             db.session.commit()
     else: # Creator preview
@@ -352,10 +346,9 @@ def delete_last_turn():
             elif session[session_key]['step_index'] > 0:
                 session[session_key]['step_index'] -= 1
                 session[session_key]['chunk_index'] = 0
-
     return jsonify({'success': True})
 
-@app.route('/auth/register', methods=['GET', 'POST'])
+@app.route('/register', methods=['GET', 'POST'])
 def register():
     if current_user.is_authenticated: return redirect(url_for('dashboard'))
     if request.method == 'POST':
@@ -372,7 +365,7 @@ def register():
         return redirect(url_for('login'))
     return render_template('register.html')
 
-@app.route('/auth/login', methods=['GET', 'POST'])
+@app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated: return redirect(url_for('dashboard'))
     if request.method == 'POST':
@@ -387,7 +380,7 @@ def login():
         return redirect(next_page or url_for('dashboard'))
     return render_template('login.html')
 
-@app.route('/auth/logout')
+@app.route('/logout')
 @login_required
 def logout():
     logout_user()
@@ -430,19 +423,6 @@ def manage_course(course_id):
     if course.creator.id != current_user.id: abort(403)
     return render_template('manage_course.html', course=course)
 
-@app.route('/course/<string:course_id>/publish', methods=['POST'])
-@login_required
-def toggle_publish_course(course_id):
-    course = Course.query.get_or_404(course_id)
-    if course.creator.id != current_user.id: abort(403)
-    if not course.lessons:
-        flash('You must add at least one chapter to publish a course.', 'warning')
-        return redirect(url_for('manage_course', course_id=course.id))
-    course.is_published = not course.is_published
-    db.session.commit()
-    flash(f"'{course.title}' is now {'published' if course.is_published else 'a private draft'}.", 'success' if course.is_published else 'info')
-    return redirect(url_for('manage_course', course_id=course.id))
-
 @app.route('/course/<string:course_id>/add_chapter', methods=['GET'])
 @login_required
 def add_chapter_page(course_id):
@@ -460,23 +440,27 @@ def save_chapter(course_id):
     if not title or not script:
         flash('Both a title and script are required.', 'warning')
         return redirect(url_for('add_chapter_page', course_id=course.id))
-    files = request.files.getlist('media')
+    
+    uploaded_files = request.files.getlist('media_files')
     media_urls = []
-    for uploaded_file in files:
+    for uploaded_file in uploaded_files:
         if uploaded_file.filename != '':
             filename = str(uuid.uuid4()) + os.path.splitext(uploaded_file.filename)[1]
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             uploaded_file.save(filepath)
             media_urls.append(url_for('static', filename=f'uploads/{filename}'))
+    
     parsed_data = parse_lesson_script(script)
     if not parsed_data:
         flash('The AI could not understand the lesson structure. Please check your tags and try again.', 'danger')
         return redirect(url_for('add_chapter_page', course_id=course.id))
+    
     media_url_iterator = iter(media_urls)
     for step in parsed_data.get('steps', []):
         if step.get('type') == 'MEDIA':
             try: step['media_url'] = next(media_url_iterator)
             except StopIteration: break
+            
     last_chapter = Lesson.query.filter_by(course_id=course.id).order_by(Lesson.chapter_number.desc()).first()
     new_chapter_number = (last_chapter.chapter_number + 1) if last_chapter else 1
     new_lesson = Lesson(title=title, raw_script=script, parsed_json=json.dumps(parsed_data), course_id=course.id, chapter_number=new_chapter_number)
@@ -499,28 +483,32 @@ def update_chapter(lesson_id):
     if lesson.course.creator.id != current_user.id: abort(403)
     lesson.title = request.form['title']
     lesson.raw_script = request.form['script']
-    files = request.files.getlist('media')
+    
+    uploaded_files = request.files.getlist('media_files')
     media_urls = []
-    for uploaded_file in files:
+    for uploaded_file in uploaded_files:
         if uploaded_file.filename != '':
             filename = str(uuid.uuid4()) + os.path.splitext(uploaded_file.filename)[1]
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             uploaded_file.save(filepath)
             media_urls.append(url_for('static', filename=f'uploads/{filename}'))
+            
     parsed_data = parse_lesson_script(lesson.raw_script)
     if not parsed_data:
         flash('The AI could not understand the lesson structure.', 'danger')
         return redirect(url_for('edit_chapter_page', lesson_id=lesson.id))
+        
     media_url_iterator = iter(media_urls)
     for step in parsed_data.get('steps', []):
         if step.get('type') == 'MEDIA':
             try: step['media_url'] = next(media_url_iterator)
             except StopIteration: break
+            
     lesson.parsed_json = json.dumps(parsed_data)
     if lesson.id in RAG_RETRIEVERS: del RAG_RETRIEVERS[lesson.id]
     db.session.commit()
     flash('Chapter updated successfully!', 'success')
-    return redirect(url_for('manage_course', course_id=lesson.course_id))
+    return redirect(url_for('manage_course', course_id=lesson.course.id))
 
 @app.route('/chapter/<string:lesson_id>/delete', methods=['POST'])
 @login_required
@@ -535,7 +523,7 @@ def delete_chapter(lesson_id):
     if lesson_id in RAG_RETRIEVERS: del RAG_RETRIEVERS[lesson_id]
     db.session.commit()
     flash('Chapter deleted successfully.', 'success')
-    return redirect(url_for('manage_course', course_id=course_id))
+    return redirect(url_for('manage_course', course_id=course.id))
 
 @app.route('/explore')
 def explore():
@@ -543,28 +531,22 @@ def explore():
     return render_template('explore.html', courses=courses)
 
 @app.route('/course/<string:course_id>')
+@login_required
 def course_player(course_id):
     course = Course.query.get_or_404(course_id)
-    is_authorized = course.is_published or \
-                    (current_user.is_authenticated and current_user.id == course.user_id) or \
-                    (current_user.is_authenticated and current_user.is_enrolled(course))
+    is_authorized = course.is_published or (current_user.is_authenticated and (current_user.id == course.user_id or current_user.is_enrolled(course)))
     if not is_authorized: abort(404)
-
     if not course.lessons:
         if current_user.is_authenticated and current_user.id == course.user_id:
             flash('This course has no chapters yet. Add one to enable the preview.', 'info')
             return redirect(url_for('manage_course', course_id=course.id))
         flash("This course has no content yet.", "warning")
         return redirect(url_for('explore'))
-
     chapter_to_start = 1
-    if current_user.is_authenticated:
-        enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=course.id).first()
-        if enrollment:
-            chapter_to_start = enrollment.last_completed_chapter_number + 1
-            if chapter_to_start > len(course.lessons):
-                chapter_to_start = len(course.lessons)
-    
+    enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=course.id).first()
+    if enrollment:
+        chapter_to_start = enrollment.last_completed_chapter_number + 1
+        if chapter_to_start > len(course.lessons): chapter_to_start = len(course.lessons)
     return redirect(url_for('student_chapter_view', course_id=course.id, chapter_number=chapter_to_start))
 
 @app.route('/course/<string:course_id>/<int:chapter_number>')
@@ -573,14 +555,12 @@ def student_chapter_view(course_id, chapter_number):
     course = Course.query.get_or_404(course_id)
     is_authorized = course.is_published or course.user_id == current_user.id or current_user.is_enrolled(course)
     if not is_authorized: abort(404)
-
     lesson = Lesson.query.filter_by(course_id=course.id, chapter_number=chapter_number).first_or_404()
     enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=course.id).first()
     initial_history_data = None
     if enrollment:
         chat_history_record = ChatHistory.query.filter_by(enrollment_id=enrollment.id, lesson_id=lesson.id).first()
-        if chat_history_record:
-            initial_history_data = {"history_json": chat_history_record.history_json, "current_step_index": chat_history_record.current_step_index}
+        if chat_history_record: initial_history_data = {"history_json": chat_history_record.history_json, "current_step_index": chat_history_record.current_step_index, "current_chunk_index": chat_history_record.current_chunk_index}
     else: # Creator preview
         session_key = f'preview_chat_{lesson.id}'
         if session_key in session: del session[session_key]

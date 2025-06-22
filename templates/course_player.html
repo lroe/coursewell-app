@@ -10,6 +10,13 @@
             align-items: center;
             justify-content: space-between;
         }
+        /* Style for audio player in chat */
+        .audio-message audio {
+            width: 100%;
+            margin-top: 5px;
+            filter: sepia(20%) saturate(70%) grayscale(1) contrast(95%) brightness(90%);
+            border-radius: 50px;
+        }
     </style>
 </head>
 <body class="course-player-body">
@@ -51,7 +58,7 @@
                 <!-- Chat Control Buttons -->
                 <div class="chat-controls" style="margin-left: auto; display: flex; gap: 10px;">
                     {# These controls only make sense for enrolled students whose progress is saved #}
-                    {% if enrollment or (current_user.is_authenticated and course.user_id == current_user.id) %}
+                    {% if enrollment %}
                         <button id="delete-last-btn" class="btn btn-secondary" title="Delete Last Turn">↶</button>
                         <button id="reset-btn" class="btn btn-danger" title="Reset Conversation">Reset</button>
                     {% endif %}
@@ -77,9 +84,27 @@
     <script>
         const COURSE_ID = "{{ course.id }}";
         const LESSON_ID = "{{ current_lesson.id }}";
-        // Load initial history from the backend, using the safe `tojson` filter
         const initialHistoryRecord = {{ initial_history | tojson }};
     </script>
+    
+    <!-- NEW: Include Frontend Libraries for Markdown and LaTeX -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+      // Configure MathJax
+      window.MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']]
+        },
+        svg: {
+          fontCache: 'global'
+        }
+      };
+    </script>
+    <script type="text/javascript" id="MathJax-script" async
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js">
+    </script>
+
     <script src="{{ url_for('static', filename='js/lesson.js') }}"></script>
 </body>
 </html>

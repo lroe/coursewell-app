@@ -8,7 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const deleteLastBtn = document.getElementById('delete-last-btn');
 
     let isWaitingForResponse = false;
-    let localChatHistory = []; // Used only for local rendering, not as the source of truth
+    let localChatHistory = [];
 
     // --- Q&A Input Logic ---
     function sendQuestion() {
@@ -69,8 +69,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await response.json();
             if (data.success) {
-                renderChatHistory(data.new_history);
-                showContinueButton();
+                // To properly re-render, a full reload is the simplest way
+                window.location.reload();
             } else {
                 alert(data.message || 'Could not delete the last turn.');
             }
@@ -81,26 +81,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // --- Rendering and UI Functions ---
-    function renderChatHistory(historyList) {
-        chatBox.innerHTML = '';
-        localChatHistory = historyList || [];
-        localChatHistory.forEach(message => {
-            const sender = message.role === 'user' ? 'student' : 'tutor';
-            // Gemini uses 'model' for the tutor role
-            const text = message.parts && message.parts.length > 0 ? message.parts[0].text : '';
-            addMessage(text, sender);
-        });
-    }
-
     function addMessage(text, sender) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}-message`;
-        messageDiv.innerHTML = text.replace(/\n/g, '<br>');
+        
+        // NEW: Parse markdown before setting innerHTML
+        messageDiv.innerHTML = marked.parse(text);
+
         chatBox.appendChild(messageDiv);
         chatBox.scrollTop = chatBox.scrollHeight;
+
+        // NEW: Tell MathJax to typeset the new content
+        MathJax.typesetPromise([messageDiv]).catch((err) => console.log('MathJax error:', err));
     }
 
-    function addMediaMessage(url, alt) {
+    function addImageMessage(url, alt) {
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message tutor-message media-message';
         const img = document.createElement('img');
@@ -110,6 +105,25 @@ document.addEventListener('DOMContentLoaded', () => {
         chatBox.appendChild(messageDiv);
         chatBox.scrollTop = chatBox.scrollHeight;
     }
+
+    function addAudioMessage(url, description) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message tutor-message audio-message';
+        
+        const desc = document.createElement('p');
+        desc.style.marginBottom = '5px';
+        desc.innerText = description;
+
+        const audio = document.createElement('audio');
+        audio.controls = true;
+        audio.src = url;
+        
+        messageDiv.appendChild(desc);
+        messageDiv.appendChild(audio);
+        chatBox.appendChild(messageDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
 
     function showMCQOptions(questionData) {
         inputArea.innerHTML = '';
@@ -170,7 +184,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         continueButton.addEventListener('click', () => {
             if (isWaitingForResponse) return;
-            addMessage('Continue', 'student');
+            // No need to display "Continue" in the chat, it just triggers the next step
             postToChat('Continue', 'LESSON_FLOW');
         });
 
@@ -206,18 +220,18 @@ document.addEventListener('DOMContentLoaded', () => {
         systemMessage.style.display = 'none';
         qnaInput.disabled = false;
         sendQnaBtn.disabled = false;
-
-        // Render new messages from the backend
-        if (data.feedback) { addMessage(data.feedback, 'tutor'); }
-        if (data.media_url) { addMediaMessage(data.media_url, "Lesson media"); }
-        if (data.tutor_text) { addMessage(data.tutor_text, 'tutor'); }
         
-        if (Object.keys(data).length === 1 && data.next_step) {
-             postToChat(null, 'LESSON_FLOW');
-             return;
+        // Render new messages and media from the backend
+        if (data.media_url) {
+            if (data.media_type === 'audio') {
+                addAudioMessage(data.media_url, data.tutor_text || "Listen to this:");
+            } else { // Default to image
+                addImageMessage(data.media_url, "Lesson media");
+            }
         }
-        
-        let nextInteractionScheduled = false;
+        if (data.tutor_text && !data.media_url) { // Don't show text twice for media
+             addMessage(data.tutor_text, 'tutor');
+        }
 
         if (data.is_qna_response) {
              showContinueButton();
@@ -239,36 +253,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 nextChapterButton.className = 'btn btn-primary';
                 inputArea.appendChild(nextChapterButton);
             }
-            nextInteractionScheduled = true;
         } else if (data.question) {
             if (data.question.type === 'QUESTION_MCQ') {
                 showMCQOptions(data.question);
             } else if (data.question.type === 'QUESTION_SA') {
                 showShortAnswerInput(data.question);
             }
-            nextInteractionScheduled = true;
-        }
-
-        if (!nextInteractionScheduled) {
+        } else {
             showContinueButton();
         }
     }
 
     // --- Initialization Logic ---
     function initializeLesson() {
-        if (initialHistoryRecord && initialHistoryRecord.history_json) {
-            const savedHistory = JSON.parse(initialHistoryRecord.history_json);
-            if (savedHistory && savedHistory.length > 0) {
-                renderChatHistory(savedHistory);
-                showContinueButton();
-            } else {
-                postToChat(null, 'LESSON_FLOW');
-            }
-        } else {
-            postToChat(null, 'LESSON_FLOW');
-        }
+        // We start the lesson by "clicking" continue with no input
+        postToChat(null, 'LESSON_FLOW');
     }
 
-    // Initial call to start or resume the lesson
     initializeLesson();
 });
