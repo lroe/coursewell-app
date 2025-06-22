@@ -389,3 +389,20 @@ input:focus, textarea:focus { outline: 2px solid #bfa073; }
     padding: 10px 15px;
     border-radius: 20px;
 }
+
+/* ... (all your existing CSS) ... */
+
+/* --- New Editor Preview for Audio --- */
+.audio-preview {
+    background-color: #f7f7f7;
+    border: 1px solid #d1bfa4;
+    border-radius: 5px;
+    padding: 15px;
+    margin: 1rem 0;
+    font-style: italic;
+    color: #5c4a2e;
+}
+.audio-preview audio {
+    width: 100%;
+    margin-top: 10px;
+}
