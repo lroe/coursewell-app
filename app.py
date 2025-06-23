@@ -133,8 +133,6 @@ Here is the text to explain:
     "QUESTION": "Okay, time for a quick question to check your understanding: {}"
 }
 
-
-# (Add this with the other prompts)
 INTENT_CLASSIFIER_PROMPT = """
 You are an intent classification agent. Your task is to analyze a user's input during a lesson and determine their intent.
 The user's input is: "{}"
@@ -227,9 +225,35 @@ USER'S QUESTION:
 """
     return get_tutor_response(rag_prompt)
 
-# --- THE NESTED STATE MACHINE CHAT ROUTE ---
-# In app.py, replace the ENTIRE 'chat' function with this one.
 
+@app.route('/chat/intent', methods=['POST'])
+@login_required
+def classify_intent():
+    data = request.json
+    user_input = data.get('user_input')
+    lesson_id = data.get('lesson_id')
+
+    lesson = Lesson.query.get_or_404(lesson_id)
+    lesson_steps = json.loads(lesson.parsed_json).get('steps', [])
+    
+    media_descriptions = [
+        step.get('alt_text') for step in lesson_steps 
+        if step.get('type') == 'MEDIA' and step.get('alt_text')
+    ]
+    
+    prompt = INTENT_CLASSIFIER_PROMPT.format(user_input, media_descriptions, user_input)
+    
+    try:
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')
+        response = model.generate_content(prompt)
+        cleaned_response = response.text.strip().replace("```json", "").replace("```", "").strip()
+        intent_data = json.loads(cleaned_response)
+        return jsonify(intent_data)
+    except Exception as e:
+        print(f"Error classifying intent: {e}")
+        return jsonify({"intent": "QNA", "query": user_input})
+
+# --- THE NESTED STATE MACHINE CHAT ROUTE ---
 @app.route('/chat', methods=['POST'])
 @login_required
 def chat():
@@ -241,7 +265,7 @@ def chat():
     lesson = Lesson.query.get_or_404(lesson_id)
     lesson_steps = json.loads(lesson.parsed_json).get('steps', [])
 
-    # --- NEW: Handle a request to re-display specific media ---
+    # --- Handle a request to re-display specific media ---
     if request_type == 'MEDIA_REQUEST':
         requested_alt_text = user_input
         media_to_show = None
@@ -255,46 +279,58 @@ def chat():
                 "tutor_text": f"Of course, here is '{media_to_show.get('alt_text')}' again.",
                 "media_url": media_to_show.get('media_url'),
                 "media_type": media_to_show.get('media_type'),
-                "is_qna_response": True # This tells the frontend to show the "Continue" button
+                "is_qna_response": True
             }
             return jsonify(response_data)
         else:
-            # If for some reason the media can't be found, fall back to RAG
             request_type = 'QNA'
-            # The original user_input might be lost here, but this is an edge case.
-            # We can improve this later if needed.
 
-    # 1. Authorize & determine state management (DB vs. Session)
+    # 1. Authorize and load state, including chat history
     enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=lesson.course_id).first()
     is_creator = (current_user.id == lesson.course.user_id)
     if not enrollment and not is_creator:
         abort(403, "Forbidden")
 
-    # 2. Load current state (step and chunk indices)
     history_record = None
     step_index, chunk_index = 0, 0
+    chat_log = []
     session_key = f'preview_chat_{lesson_id}'
 
     if enrollment:
         history_record = ChatHistory.query.filter_by(enrollment_id=enrollment.id, lesson_id=lesson.id).first()
-        if not history_record:
+        if history_record:
+            step_index = history_record.current_step_index
+            chunk_index = history_record.current_chunk_index
+            chat_log = json.loads(history_record.history_json)
+        else:
             history_record = ChatHistory(enrollment_id=enrollment.id, lesson_id=lesson.id)
             db.session.add(history_record)
-        step_index = history_record.current_step_index
-        chunk_index = history_record.current_chunk_index
-    else: # Creator using session
-        if session_key not in session or user_input is None:
-            session[session_key] = {'step_index': 0, 'chunk_index': 0}
-        step_index = session[session_key].get('step_index', 0)
-        chunk_index = session[session_key].get('chunk_index', 0)
+    else: 
+        if session_key in session and user_input is not None:
+             chat_log = session.get(session_key, {}).get('chat_log', [])
+             step_index = session.get(session_key, {}).get('step_index', 0)
+             chunk_index = session.get(session_key, {}).get('chunk_index', 0)
+        else:
+             session[session_key] = {'step_index': 0, 'chunk_index': 0, 'chat_log': []}
 
-    # 3. Handle Q&A with RAG (this is an interruption and doesn't affect state)
+    # Log the student's input if it's part of the lesson flow
+    if user_input and request_type == 'LESSON_FLOW' and user_input != 'Continue':
+        chat_log.append({"sender": "student", "type": "text", "content": user_input})
+    
+    # Handle Q&A with RAG, which is a separate path
     if request_type == 'QNA':
+        chat_log.append({"sender": "student", "type": "text", "content": user_input})
         retriever = _get_or_create_rag_retriever(lesson.id, lesson.raw_script)
         response_text = answer_question_with_rag(user_input, retriever)
+        chat_log.append({"sender": "tutor", "type": "text", "content": response_text})
+        if history_record: 
+            history_record.history_json = json.dumps(chat_log)
+        elif not enrollment:
+             session[session_key]['chat_log'] = chat_log
+        db.session.commit()
         return jsonify({'is_qna_response': True, 'tutor_text': response_text})
 
-    # 4. Main Lesson Flow (Nested State Machine)
+    # 4. Main Lesson Flow (State Machine)
     response_data = {}
     model_response_text = ""
     next_step_index, next_chunk_index = step_index, chunk_index
@@ -305,8 +341,16 @@ def chat():
         if enrollment and enrollment.last_completed_chapter_number < lesson.chapter_number:
             enrollment.last_completed_chapter_number = lesson.chapter_number
             if enrollment.last_completed_chapter_number >= len(lesson.course.lessons):
-                if not enrollment.completed_at: enrollment.completed_at = datetime.datetime.utcnow()
-            response_data['certificate_url'] = url_for('certificate_view', course_id=lesson.course_id)
+                if not enrollment.completed_at:
+                    enrollment.completed_at = datetime.datetime.utcnow()
+                response_data['certificate_url'] = url_for('certificate_view', course_id=lesson.course_id)
+            else:
+                next_chapter_num = lesson.chapter_number + 1
+                response_data['next_chapter_url'] = url_for(
+                    'student_chapter_view', 
+                    course_id=lesson.course_id, 
+                    chapter_number=next_chapter_num
+                )
     else:
         current_step = lesson_steps[step_index]
         step_type = current_step.get('type')
@@ -317,42 +361,52 @@ def chat():
                 chunk_to_explain = content_chunks[chunk_index]
                 prompt = TUTOR_PROMPT_TEMPLATE['CONTENT'].format(chunk_to_explain)
                 model_response_text = get_tutor_response(prompt)
+                chat_log.append({"sender": "tutor", "type": "text", "content": model_response_text})
                 next_chunk_index = chunk_index + 1
-            
             if next_chunk_index >= len(content_chunks):
                 next_step_index = step_index + 1
                 next_chunk_index = 0
-        
         else: # Handles MEDIA, QUESTION_MCQ, QUESTION_SA
             if step_type == 'MEDIA':
-                response_data['media_url'] = current_step.get('media_url')
                 media_type = current_step.get('media_type', 'image')
-                response_data['media_type'] = media_type
-                
                 if media_type == 'audio':
                     prompt_template = TUTOR_PROMPT_TEMPLATE['MEDIA_AUDIO']
                 else:
                     prompt_template = TUTOR_PROMPT_TEMPLATE['MEDIA_IMAGE']
-                
                 prompt = prompt_template.format(current_step.get('alt_text', ''))
-
+                model_response_text = get_tutor_response(prompt)
+                chat_log.append({"sender": "tutor", "type": "text", "content": model_response_text})
+                chat_log.append({
+                    "sender": "tutor", 
+                    "type": media_type, 
+                    "url": current_step.get('media_url'),
+                    "alt": current_step.get('alt_text')
+                })
+                response_data['media_url'] = current_step.get('media_url')
+                response_data['media_type'] = media_type
             elif step_type in ['QUESTION_MCQ', 'QUESTION_SA']:
-                response_data['question'] = current_step
                 prompt = TUTOR_PROMPT_TEMPLATE['QUESTION'].format(current_step.get('question', ''))
+                model_response_text = get_tutor_response(prompt)
+                chat_log.append({"sender": "tutor", "type": "text", "content": model_response_text})
+                response_data['question'] = current_step
             
-            model_response_text = get_tutor_response(prompt)
             next_step_index = step_index + 1
             next_chunk_index = 0
 
     if model_response_text:
         response_data['tutor_text'] = model_response_text
 
-    # 5. Save the new state
+    # 5. Save the new state and conversation log
     if enrollment:
         history_record.current_step_index = next_step_index
         history_record.current_chunk_index = next_chunk_index
+        history_record.history_json = json.dumps(chat_log)
     else:
-        session[session_key] = {'step_index': next_step_index, 'chunk_index': next_chunk_index}
+        session[session_key] = {
+            'step_index': next_step_index, 
+            'chunk_index': next_chunk_index,
+            'chat_log': chat_log
+        }
     
     db.session.commit()
     return jsonify(response_data)
@@ -370,6 +424,7 @@ def reset_conversation():
         if history_record:
             history_record.current_step_index = 0
             history_record.current_chunk_index = 0
+            history_record.history_json = '[]' # Also clear the log
             db.session.commit()
     else: # Creator preview
         session_key = f'preview_chat_{lesson_id}'
@@ -386,6 +441,8 @@ def delete_last_turn():
     if enrollment:
         history_record = ChatHistory.query.filter_by(enrollment_id=enrollment.id, lesson_id=lesson.id).first()
         if history_record:
+            # This is a complex operation; for now, we just revert the step/chunk.
+            # A full implementation would require popping from the chat_log and re-evaluating state.
             if history_record.current_chunk_index > 0:
                 history_record.current_chunk_index -= 1
             elif history_record.current_step_index > 0:
@@ -495,7 +552,6 @@ def save_chapter(course_id):
         flash('Both a title and script are required.', 'warning')
         return redirect(url_for('add_chapter_page', course_id=course.id))
     
-    # --- Start of New Hydration Logic ---
     uploaded_files = request.files.getlist('media_files')
     image_urls = []
     audio_urls = []
@@ -526,7 +582,6 @@ def save_chapter(course_id):
             elif step.get('media_type') == 'audio':
                 try: step['media_url'] = next(audio_url_iterator)
                 except StopIteration: step['media_url'] = None
-    # --- End of New Hydration Logic ---
             
     last_chapter = Lesson.query.filter_by(course_id=course.id).order_by(Lesson.chapter_number.desc()).first()
     new_chapter_number = (last_chapter.chapter_number + 1) if last_chapter else 1
@@ -543,15 +598,12 @@ def edit_chapter_page(lesson_id):
     if lesson.course.creator.id != current_user.id: abort(403)
     return render_template('edit_chapter.html', lesson=lesson)
 
-# In app.py, replace the ENTIRE update_chapter function with this one.
-
 @app.route('/chapter/<string:lesson_id>/update', methods=['POST'])
 @login_required
 def update_chapter(lesson_id):
     lesson = Lesson.query.get_or_404(lesson_id)
     if lesson.course.creator.id != current_user.id: abort(403)
     
-    # --- Start of New, Smarter Logic ---
     old_media_map = {}
     if lesson.parsed_json:
         try:
@@ -601,13 +653,12 @@ def update_chapter(lesson_id):
             
             step['media_url'] = assigned_url
 
-    # --- End of New Logic ---
-
     lesson.parsed_json = json.dumps(parsed_data)
     if lesson.id in RAG_RETRIEVERS: del RAG_RETRIEVERS[lesson.id]
     db.session.commit()
     flash('Chapter updated successfully!', 'success')
     return redirect(url_for('manage_course', course_id=lesson.course.id))
+
 @app.route('/chapter/<string:lesson_id>/delete', methods=['POST'])
 @login_required
 def delete_chapter(lesson_id):
@@ -655,13 +706,21 @@ def student_chapter_view(course_id, chapter_number):
     if not is_authorized: abort(404)
     lesson = Lesson.query.filter_by(course_id=course.id, chapter_number=chapter_number).first_or_404()
     enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=course.id).first()
+    
     initial_history_data = None
     if enrollment:
         chat_history_record = ChatHistory.query.filter_by(enrollment_id=enrollment.id, lesson_id=lesson.id).first()
-        if chat_history_record: initial_history_data = {"history_json": chat_history_record.history_json, "current_step_index": chat_history_record.current_step_index, "current_chunk_index": chat_history_record.current_chunk_index}
+        if chat_history_record:
+            initial_history_data = {
+                "history_json": chat_history_record.history_json, 
+                "current_step_index": chat_history_record.current_step_index, 
+                "current_chunk_index": chat_history_record.current_chunk_index
+            }
     else: # Creator preview
         session_key = f'preview_chat_{lesson.id}'
-        if session_key in session: del session[session_key]
+        if session_key in session:
+            del session[session_key]
+            
     return render_template('course_player.html', course=course, current_lesson=lesson, enrollment=enrollment, initial_history=initial_history_data)
 
 @app.route('/course/<string:course_id>/enroll', methods=['POST'])
@@ -771,36 +830,5 @@ def shared_course_view(link_id):
     course = Course.query.filter_by(shareable_link_id=link_id).first_or_404()
     return render_template('course_detail.html', course=course, share_id=link_id)
 
-# (Add this route somewhere before the main /chat route)
-
-@app.route('/chat/intent', methods=['POST'])
-@login_required
-def classify_intent():
-    data = request.json
-    user_input = data.get('user_input')
-    lesson_id = data.get('lesson_id')
-
-    lesson = Lesson.query.get_or_404(lesson_id)
-    lesson_steps = json.loads(lesson.parsed_json).get('steps', [])
-    
-    # Get a list of all media descriptions available in the lesson
-    media_descriptions = [
-        step.get('alt_text') for step in lesson_steps 
-        if step.get('type') == 'MEDIA' and step.get('alt_text')
-    ]
-    
-    # Format the prompt and get the intent from the AI
-    prompt = INTENT_CLASSIFIER_PROMPT.format(user_input, media_descriptions, user_input)
-    
-    try:
-        model = genai.GenerativeModel('gemini-1.5-pro-latest')
-        response = model.generate_content(prompt)
-        cleaned_response = response.text.strip().replace("```json", "").replace("```", "").strip()
-        intent_data = json.loads(cleaned_response)
-        return jsonify(intent_data)
-    except Exception as e:
-        print(f"Error classifying intent: {e}")
-        # Default to QNA on error
-        return jsonify({"intent": "QNA", "query": user_input})
 if __name__ == '__main__':
     app.run(debug=True)

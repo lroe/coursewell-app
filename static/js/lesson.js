@@ -8,40 +8,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const deleteLastBtn = document.getElementById('delete-last-btn');
 
     let isWaitingForResponse = false;
-    let localChatHistory = [];
 
     // --- Q&A Input Logic ---
-    // (OLD sendQuestion function)
-     async function sendQuestion() {
-        if (isWaitingForResponse) return;
-        const question = qnaInput.value.trim();
-        if (question === "") return;
-
-        addMessage(question, 'student');
-        qnaInput.value = '';
-        isWaitingForResponse = true; // Lock input immediately
-
-        // 1. Call the new intent classifier route first
-        const intentResponse = await fetch('/chat/intent', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_input: question, lesson_id: LESSON_ID })
-        });
-        const intentData = await intentResponse.json();
-
-        isWaitingForResponse = false; // Unlock before calling postToChat
-
-        // 2. Call postToChat with the classified intent
-        if (intentData.intent === 'MEDIA_REQUEST') {
-            // Pass the identified alt_text as the user_input
-            postToChat(intentData.alt_text, 'MEDIA_REQUEST');
-        } else {
-            // Default to QNA, passing the original question
-            postToChat(intentData.query, 'QNA');
-        }
-    }
-
-// (NEW and IMPROVED sendQuestion function)
     async function sendQuestion() {
         if (isWaitingForResponse) return;
         const question = qnaInput.value.trim();
@@ -49,7 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         addMessage(question, 'student');
         qnaInput.value = '';
-        isWaitingForResponse = true; // Lock input immediately
+        isWaitingForResponse = true;
 
         // 1. Call the new intent classifier route first
         const intentResponse = await fetch('/chat/intent', {
@@ -59,14 +27,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         const intentData = await intentResponse.json();
 
-        isWaitingForResponse = false; // Unlock before calling postToChat
+        isWaitingForResponse = false;
 
         // 2. Call postToChat with the classified intent
         if (intentData.intent === 'MEDIA_REQUEST') {
-            // Pass the identified alt_text as the user_input
             postToChat(intentData.alt_text, 'MEDIA_REQUEST');
         } else {
-            // Default to QNA, passing the original question
             postToChat(intentData.query, 'QNA');
         }
     }
@@ -119,7 +85,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await response.json();
             if (data.success) {
-                // To properly re-render, a full reload is the simplest way
                 window.location.reload();
             } else {
                 alert(data.message || 'Could not delete the last turn.');
@@ -134,14 +99,9 @@ document.addEventListener('DOMContentLoaded', () => {
     function addMessage(text, sender) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}-message`;
-        
-        // NEW: Parse markdown before setting innerHTML
         messageDiv.innerHTML = marked.parse(text);
-
         chatBox.appendChild(messageDiv);
         chatBox.scrollTop = chatBox.scrollHeight;
-
-        // NEW: Tell MathJax to typeset the new content
         MathJax.typesetPromise([messageDiv]).catch((err) => console.log('MathJax error:', err));
     }
 
@@ -157,26 +117,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function addAudioMessage(url, description) {
-        // This function now only adds the audio player, not the description text.
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message tutor-message audio-message';
-        
         const audio = document.createElement('audio');
         audio.controls = true;
         audio.src = url;
-        
         messageDiv.appendChild(audio);
         chatBox.appendChild(messageDiv);
         chatBox.scrollTop = chatBox.scrollHeight;
     }
-
 
     function showMCQOptions(questionData) {
         inputArea.innerHTML = '';
         const questionText = document.createElement('p');
         questionText.innerText = questionData.question;
         inputArea.appendChild(questionText);
-
         const optionsContainer = document.createElement('div');
         optionsContainer.className = 'options-container';
         for (const key in questionData.options) {
@@ -200,12 +155,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const questionText = document.createElement('p');
         questionText.innerText = questionData.question;
         inputArea.appendChild(questionText);
-
         const answerTextarea = document.createElement('textarea');
         answerTextarea.rows = 3;
         answerTextarea.placeholder = "Type your answer here...";
         inputArea.appendChild(answerTextarea);
-
         const submitButton = document.createElement('button');
         submitButton.className = 'btn';
         submitButton.innerText = 'Submit Answer';
@@ -223,17 +176,13 @@ document.addEventListener('DOMContentLoaded', () => {
         inputArea.innerHTML = '';
         const buttonContainer = document.createElement('div');
         buttonContainer.style.textAlign = 'right';
-
         const continueButton = document.createElement('button');
         continueButton.innerText = 'Continue';
         continueButton.className = 'btn btn-primary'; 
-
         continueButton.addEventListener('click', () => {
             if (isWaitingForResponse) return;
-            // No need to display "Continue" in the chat, it just triggers the next step
             postToChat('Continue', 'LESSON_FLOW');
         });
-
         buttonContainer.appendChild(continueButton);
         inputArea.appendChild(buttonContainer);
     }
@@ -245,21 +194,13 @@ document.addEventListener('DOMContentLoaded', () => {
         systemMessage.style.display = 'block';
         qnaInput.disabled = true;
         sendQnaBtn.disabled = true;
-        
         inputArea.innerHTML = ''; 
-
-        const requestBody = {
-            lesson_id: LESSON_ID,
-            user_input: userInput,
-            request_type: requestType
-        };
 
         const response = await fetch('/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody)
+            body: JSON.stringify({ lesson_id: LESSON_ID, user_input: userInput, request_type: requestType })
         });
-
         const data = await response.json();
 
         isWaitingForResponse = false;
@@ -267,22 +208,16 @@ document.addEventListener('DOMContentLoaded', () => {
         qnaInput.disabled = false;
         sendQnaBtn.disabled = false;
         
-        // --- NEW RENDERING LOGIC ---
-        // First, ALWAYS render the tutor's text message if it exists.
         if (data.tutor_text) {
              addMessage(data.tutor_text, 'tutor');
         }
-
-        // Second, if there's also media, render the media player in a separate bubble.
         if (data.media_url) {
             if (data.media_type === 'audio') {
-                // The description is now handled by the separate text message above.
                 addAudioMessage(data.media_url, "Listen to the clip above:"); 
-            } else { // Default to image
+            } else {
                 addImageMessage(data.media_url, "View the image above");
             }
         }
-        // --- END OF NEW LOGIC ---
 
         if (data.is_qna_response) {
              showContinueButton();
@@ -290,7 +225,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (data.is_lesson_end) {
-            inputArea.innerHTML = ''; // Clear for final buttons
+            inputArea.innerHTML = '';
             if (data.certificate_url) {
                 const certLink = document.createElement('a');
                 certLink.href = data.certificate_url;
@@ -317,9 +252,58 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Initialization Logic ---
     function initializeLesson() {
-        // We start the lesson by "clicking" continue with no input
+        if (initialHistoryRecord && initialHistoryRecord.history_json) {
+            try {
+                const history = JSON.parse(initialHistoryRecord.history_json);
+                history.forEach(message => {
+                    if (message.type === 'text') {
+                        addMessage(message.content, message.sender);
+                    } else if (message.type === 'image') {
+                        addImageMessage(message.url, message.alt);
+                    } else if (message.type === 'audio') {
+                        addAudioMessage(message.url, message.alt);
+                    }
+                });
+            } catch (e) {
+                console.error("Could not parse chat history:", e);
+            }
+        }
+        
+        // Always call postToChat. The backend will determine the correct next step,
+        // whether it's the next message, the end-of-lesson UI, or resuming from a saved state.
         postToChat(null, 'LESSON_FLOW');
     }
 
     initializeLesson();
+});
+
+// --- Lightbox/Modal Logic ---
+document.addEventListener('DOMContentLoaded', () => {
+    const modal = document.getElementById("image-modal");
+    if (!modal) return;
+
+    const modalImg = document.getElementById("modal-img");
+    const closeBtn = document.querySelector(".close-btn");
+    const chatBox = document.getElementById('chat-box');
+
+    chatBox.addEventListener('click', function(event) {
+        if (event.target.tagName === 'IMG' && event.target.closest('.media-message')) {
+            modal.style.display = "block";
+            modalImg.src = event.target.src;
+        }
+    });
+
+    function closeModal() {
+        modal.style.display = "none";
+    }
+
+    if(closeBtn) {
+        closeBtn.onclick = closeModal;
+    }
+    
+    window.onclick = function(event) {
+        if (event.target == modal) {
+            closeModal();
+        }
+    }
 });
