@@ -70,6 +70,7 @@ class Lesson(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     title = db.Column(db.String(150), nullable=False)
     raw_script = db.Column(db.Text, nullable=False)
+    editor_html = db.Column(db.Text, nullable=True) 
     parsed_json = db.Column(db.Text, nullable=False)
     course_id = db.Column(db.String(36), db.ForeignKey('course.id'), nullable=False)
     chapter_number = db.Column(db.Integer, nullable=False)
@@ -312,6 +313,7 @@ def chat():
     lesson = Lesson.query.get_or_404(lesson_id)
     lesson_steps = json.loads(lesson.parsed_json).get('steps', [])
 
+    # --- Intent Handling for Typed User Input ---
     if request_type == 'MEDIA_REQUEST':
         requested_alt_text = user_input
         media_to_show = None
@@ -329,50 +331,65 @@ def chat():
             }
             return jsonify(response_data)
         else:
+            # If media not found, treat it as a regular question
             request_type = 'QNA'
 
+    # --- Authorization and State Loading ---
     enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=lesson.course_id).first()
     is_creator = (current_user.id == lesson.course.user_id)
-    if not enrollment and not is_creator:
+
+    # 1. Check authorization: must be enrolled, the creator, or an admin
+    if not enrollment and not is_creator and not current_user.is_admin:
         abort(403, "Forbidden")
 
+    # 2. Load state: progress and conversation log
     history_record = None
     step_index, chunk_index = 0, 0
     chat_log = []
     session_key = f'preview_chat_{lesson_id}'
 
     if enrollment:
+        # Enrolled student: use the database for persistence
         history_record = ChatHistory.query.filter_by(enrollment_id=enrollment.id, lesson_id=lesson.id).first()
         if history_record:
             step_index = history_record.current_step_index
             chunk_index = history_record.current_chunk_index
             chat_log = json.loads(history_record.history_json)
         else:
+            # First time in this chapter, create a new record
             history_record = ChatHistory(enrollment_id=enrollment.id, lesson_id=lesson.id)
             db.session.add(history_record)
     else: 
+        # Creator or Admin previewing: use the temporary session
         if session_key in session and user_input is not None:
              chat_log = session.get(session_key, {}).get('chat_log', [])
              step_index = session.get(session_key, {}).get('step_index', 0)
              chunk_index = session.get(session_key, {}).get('chunk_index', 0)
         else:
+             # Start a fresh preview session
              session[session_key] = {'step_index': 0, 'chunk_index': 0, 'chat_log': []}
 
+    # --- Log User Input (if applicable) ---
     if user_input and request_type == 'LESSON_FLOW' and user_input != 'Continue':
         chat_log.append({"sender": "student", "type": "text", "content": user_input})
     
+    # --- Q&A Path (interrupts normal flow) ---
     if request_type == 'QNA':
         chat_log.append({"sender": "student", "type": "text", "content": user_input})
         retriever = _get_or_create_rag_retriever(lesson.id, lesson.raw_script)
         response_text = answer_question_with_rag(user_input, retriever)
         chat_log.append({"sender": "tutor", "type": "text", "content": response_text})
+        
+        # Save the Q&A to the log immediately
         if history_record: 
             history_record.history_json = json.dumps(chat_log)
-        elif not enrollment:
+        else: # Save to session for previews
              session[session_key]['chat_log'] = chat_log
         db.session.commit()
+        
         return jsonify({'is_qna_response': True, 'tutor_text': response_text})
 
+    # --- Main Lesson Flow (State Machine) ---
     response_data = {}
     model_response_text = ""
     next_step_index, next_chunk_index = step_index, chunk_index
@@ -396,6 +413,7 @@ def chat():
     else:
         current_step = lesson_steps[step_index]
         step_type = current_step.get('type')
+
         if step_type == 'CONTENT':
             content_chunks = [chunk for chunk in current_step.get('text', '').split('\n\n') if chunk.strip()]
             if chunk_index < len(content_chunks):
@@ -407,29 +425,36 @@ def chat():
             if next_chunk_index >= len(content_chunks):
                 next_step_index = step_index + 1
                 next_chunk_index = 0
-        else:
+        else:  # Handles MEDIA, QUESTION_MCQ, QUESTION_SA
             if step_type == 'MEDIA':
                 media_type = current_step.get('media_type', 'image')
-                if media_type == 'audio':
-                    prompt_template = TUTOR_PROMPT_TEMPLATE['MEDIA_AUDIO']
-                else:
-                    prompt_template = TUTOR_PROMPT_TEMPLATE['MEDIA_IMAGE']
+                prompt_template = TUTOR_PROMPT_TEMPLATE.get(f"MEDIA_{media_type.upper()}", TUTOR_PROMPT_TEMPLATE['MEDIA_IMAGE'])
                 prompt = prompt_template.format(current_step.get('alt_text', ''))
+                
                 model_response_text = get_tutor_response(prompt)
                 chat_log.append({"sender": "tutor", "type": "text", "content": model_response_text})
                 chat_log.append({
-                    "sender": "tutor", "type": media_type, "url": current_step.get('media_url'), "alt": current_step.get('alt_text')})
+                    "sender": "tutor", 
+                    "type": media_type, 
+                    "url": current_step.get('media_url'), 
+                    "alt": current_step.get('alt_text')
+                })
                 response_data['media_url'] = current_step.get('media_url')
                 response_data['media_type'] = media_type
+
             elif step_type in ['QUESTION_MCQ', 'QUESTION_SA']:
                 prompt = TUTOR_PROMPT_TEMPLATE['QUESTION'].format(current_step.get('question', ''))
                 model_response_text = get_tutor_response(prompt)
                 chat_log.append({"sender": "tutor", "type": "text", "content": model_response_text})
                 response_data['question'] = current_step
+            
             next_step_index = step_index + 1
             next_chunk_index = 0
+
     if model_response_text:
         response_data['tutor_text'] = model_response_text
+
+    # --- State Saving ---
     if enrollment:
         history_record.current_step_index = next_step_index
         history_record.current_chunk_index = next_chunk_index
@@ -440,6 +465,7 @@ def chat():
             'chunk_index': next_chunk_index,
             'chat_log': chat_log
         }
+    
     db.session.commit()
     return jsonify(response_data)
 

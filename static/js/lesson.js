@@ -22,7 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // 1. Call the new intent classifier route first
         const intentResponse = await fetch('/chat/intent', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' ,'X-CSRF-TOKEN': CSRF_TOKEN},
             body: JSON.stringify({ user_input: question, lesson_id: LESSON_ID })
         });
         const intentData = await intentResponse.json();
@@ -55,7 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 systemMessage.style.display = 'block';
                 fetch('/chat/reset', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json' ,'X-CSRF-TOKEN': CSRF_TOKEN},
                     body: JSON.stringify({ lesson_id: LESSON_ID })
                 }).then(res => res.json()).then(data => {
                     if (data.success) {
@@ -79,7 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const response = await fetch('/chat/delete_last_turn', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json','X-CSRF-TOKEN': CSRF_TOKEN },
                 body: JSON.stringify({ lesson_id: LESSON_ID })
             });
 
@@ -198,7 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const response = await fetch('/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json' ,'X-CSRF-TOKEN': CSRF_TOKEN},
             body: JSON.stringify({ lesson_id: LESSON_ID, user_input: userInput, request_type: requestType })
         });
         const data = await response.json();

@@ -54,6 +54,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // 4. Before submitting, clean up the editor content for the parser
     if (lessonForm) {
         lessonForm.addEventListener('submit', (event) => {
+            const editorHtmlInput = document.getElementById('editor-html-input');
+
+            // --- NEW: Save the raw HTML *before* stripping it ---
+            if (editorHtmlInput) {
+                editorHtmlInput.value = editor.innerHTML;
+            }
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = editor.innerHTML;
             

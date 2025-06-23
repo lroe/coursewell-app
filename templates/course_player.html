@@ -147,6 +147,7 @@
     <script>
         const COURSE_ID = "{{ course.id }}";
         const LESSON_ID = "{{ current_lesson.id }}";
+        const CSRF_TOKEN = "{{ csrf_token() }}"; 
         const initialHistoryRecord = {{ initial_history | tojson }};
     </script>
     
