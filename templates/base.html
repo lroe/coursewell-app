@@ -3,14 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}CourseWell{% endblock %} Codex</title>
+    <title>{% block title %}Interactive Courses{% endblock %} </title>
     <link href="https://fonts.googleapis.com/css2?family=UnifrakturCook:wght@700&family=Spectral:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <header class="codex-header">
-        <h1>CourseWell Codex</h1>
-        <p>An ancient library for modern minds</p>
+        <div class="logo-title-container">
+            <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Calenh Logo" class="header-logo">
+            <h1>Calenh</h1>
+        
+        </div>
+        <p>Interactive Courses</p>
     </header>
 
     <nav class="codex-nav">
@@ -41,7 +45,7 @@
     </main>
     
     <footer class="codex-footer">
-        © 2025 CourseWell Codex. Illuminating minds since MMXXV.
+        © 2025 Calenh Codex. Illuminating minds since MMXXV.
     </footer>
 
     {% block scripts %}{% endblock %}

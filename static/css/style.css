@@ -406,3 +406,21 @@ input:focus, textarea:focus { outline: 2px solid #bfa073; }
     width: 100%;
     margin-top: 10px;
 }
+
+/* --- 2. Layout (Header, Nav, Main, Footer) --- */
+
+/* NEW styles for the logo and header title */
+.logo-title-container {
+    display: flex;
+    justify-content: center; /* Center the items horizontally */
+    align-items: center;    /* Align the items vertically */
+    gap: 1rem;              /* Add some space between the logo and the title */
+}
+
+.header-logo {
+    height: 70px; /* Adjust this value to make your logo bigger or smaller */
+    width: auto;   /* Maintains the aspect ratio */
+}
+/* END of new styles */
+
+
