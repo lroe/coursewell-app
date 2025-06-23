@@ -11,13 +11,63 @@ document.addEventListener('DOMContentLoaded', () => {
     let localChatHistory = [];
 
     // --- Q&A Input Logic ---
-    function sendQuestion() {
+    // (OLD sendQuestion function)
+     async function sendQuestion() {
         if (isWaitingForResponse) return;
         const question = qnaInput.value.trim();
-        if (question !== "") {
-            addMessage(question, 'student');
-            postToChat(question, 'QNA');
-            qnaInput.value = '';
+        if (question === "") return;
+
+        addMessage(question, 'student');
+        qnaInput.value = '';
+        isWaitingForResponse = true; // Lock input immediately
+
+        // 1. Call the new intent classifier route first
+        const intentResponse = await fetch('/chat/intent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_input: question, lesson_id: LESSON_ID })
+        });
+        const intentData = await intentResponse.json();
+
+        isWaitingForResponse = false; // Unlock before calling postToChat
+
+        // 2. Call postToChat with the classified intent
+        if (intentData.intent === 'MEDIA_REQUEST') {
+            // Pass the identified alt_text as the user_input
+            postToChat(intentData.alt_text, 'MEDIA_REQUEST');
+        } else {
+            // Default to QNA, passing the original question
+            postToChat(intentData.query, 'QNA');
+        }
+    }
+
+// (NEW and IMPROVED sendQuestion function)
+    async function sendQuestion() {
+        if (isWaitingForResponse) return;
+        const question = qnaInput.value.trim();
+        if (question === "") return;
+
+        addMessage(question, 'student');
+        qnaInput.value = '';
+        isWaitingForResponse = true; // Lock input immediately
+
+        // 1. Call the new intent classifier route first
+        const intentResponse = await fetch('/chat/intent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_input: question, lesson_id: LESSON_ID })
+        });
+        const intentData = await intentResponse.json();
+
+        isWaitingForResponse = false; // Unlock before calling postToChat
+
+        // 2. Call postToChat with the classified intent
+        if (intentData.intent === 'MEDIA_REQUEST') {
+            // Pass the identified alt_text as the user_input
+            postToChat(intentData.alt_text, 'MEDIA_REQUEST');
+        } else {
+            // Default to QNA, passing the original question
+            postToChat(intentData.query, 'QNA');
         }
     }
 

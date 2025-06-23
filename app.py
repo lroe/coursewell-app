@@ -133,6 +133,26 @@ Here is the text to explain:
     "QUESTION": "Okay, time for a quick question to check your understanding: {}"
 }
 
+
+# (Add this with the other prompts)
+INTENT_CLASSIFIER_PROMPT = """
+You are an intent classification agent. Your task is to analyze a user's input during a lesson and determine their intent.
+The user's input is: "{}"
+The available media descriptions in this lesson are: {}
+
+You MUST respond with a single, specific JSON object. Choose ONE of the following intents:
+
+1.  If the user is asking a general question about the lesson content, respond with:
+    {{"intent": "QNA", "query": "the user's original question"}}
+
+2.  If the user is asking to see a specific piece of media again AND their request matches one of the available media descriptions, respond with:
+    {{"intent": "MEDIA_REQUEST", "alt_text": "the matching media description from the list"}}
+
+3.  If the user's request is unclear or doesn't fit the above, default to a general question:
+    {{"intent": "QNA", "query": "the user's original question"}}
+
+User Input: "{}"
+"""
 # --- Helper Functions ---
 def parse_lesson_script(script_text):
     try:
@@ -208,6 +228,8 @@ USER'S QUESTION:
     return get_tutor_response(rag_prompt)
 
 # --- THE NESTED STATE MACHINE CHAT ROUTE ---
+# In app.py, replace the ENTIRE 'chat' function with this one.
+
 @app.route('/chat', methods=['POST'])
 @login_required
 def chat():
@@ -218,6 +240,29 @@ def chat():
 
     lesson = Lesson.query.get_or_404(lesson_id)
     lesson_steps = json.loads(lesson.parsed_json).get('steps', [])
+
+    # --- NEW: Handle a request to re-display specific media ---
+    if request_type == 'MEDIA_REQUEST':
+        requested_alt_text = user_input
+        media_to_show = None
+        for step in lesson_steps:
+            if step.get('type') == 'MEDIA' and step.get('alt_text') == requested_alt_text:
+                media_to_show = step
+                break
+        
+        if media_to_show:
+            response_data = {
+                "tutor_text": f"Of course, here is '{media_to_show.get('alt_text')}' again.",
+                "media_url": media_to_show.get('media_url'),
+                "media_type": media_to_show.get('media_type'),
+                "is_qna_response": True # This tells the frontend to show the "Continue" button
+            }
+            return jsonify(response_data)
+        else:
+            # If for some reason the media can't be found, fall back to RAG
+            request_type = 'QNA'
+            # The original user_input might be lost here, but this is an edge case.
+            # We can improve this later if needed.
 
     # 1. Authorize & determine state management (DB vs. Session)
     enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=lesson.course_id).first()
@@ -278,16 +323,15 @@ def chat():
                 next_step_index = step_index + 1
                 next_chunk_index = 0
         
-        else:
+        else: # Handles MEDIA, QUESTION_MCQ, QUESTION_SA
             if step_type == 'MEDIA':
                 response_data['media_url'] = current_step.get('media_url')
                 media_type = current_step.get('media_type', 'image')
                 response_data['media_type'] = media_type
                 
-                # Dynamic prompt selection based on media_type
                 if media_type == 'audio':
                     prompt_template = TUTOR_PROMPT_TEMPLATE['MEDIA_AUDIO']
-                else: # Default to image
+                else:
                     prompt_template = TUTOR_PROMPT_TEMPLATE['MEDIA_IMAGE']
                 
                 prompt = prompt_template.format(current_step.get('alt_text', ''))
@@ -727,5 +771,36 @@ def shared_course_view(link_id):
     course = Course.query.filter_by(shareable_link_id=link_id).first_or_404()
     return render_template('course_detail.html', course=course, share_id=link_id)
 
+# (Add this route somewhere before the main /chat route)
+
+@app.route('/chat/intent', methods=['POST'])
+@login_required
+def classify_intent():
+    data = request.json
+    user_input = data.get('user_input')
+    lesson_id = data.get('lesson_id')
+
+    lesson = Lesson.query.get_or_404(lesson_id)
+    lesson_steps = json.loads(lesson.parsed_json).get('steps', [])
+    
+    # Get a list of all media descriptions available in the lesson
+    media_descriptions = [
+        step.get('alt_text') for step in lesson_steps 
+        if step.get('type') == 'MEDIA' and step.get('alt_text')
+    ]
+    
+    # Format the prompt and get the intent from the AI
+    prompt = INTENT_CLASSIFIER_PROMPT.format(user_input, media_descriptions, user_input)
+    
+    try:
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')
+        response = model.generate_content(prompt)
+        cleaned_response = response.text.strip().replace("```json", "").replace("```", "").strip()
+        intent_data = json.loads(cleaned_response)
+        return jsonify(intent_data)
+    except Exception as e:
+        print(f"Error classifying intent: {e}")
+        # Default to QNA on error
+        return jsonify({"intent": "QNA", "query": user_input})
 if __name__ == '__main__':
     app.run(debug=True)
