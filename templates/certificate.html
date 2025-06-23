@@ -58,6 +58,7 @@
             <h2>Leave a Review</h2>
             <p>Help other students by sharing your feedback on the course.</p>
             <form action="{{ url_for('submit_review', course_id=enrollment.course.id) }}" method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-group">
                     <label>Rating</label>
                     <div class="star-rating">

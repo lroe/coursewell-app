@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import datetime
 import pandas as pd
 import numpy as np
+from flask_wtf.csrf import CSRFProtect
+from functools import wraps
 
 # --- Initialization ---
 load_dotenv()
@@ -19,8 +21,11 @@ app.config['SECRET_KEY'] = os.getenv("SECRET_KEY", "a-strong-default-secret-key-
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///coursewell.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'mp3', 'wav', 'ogg'}
 
 db = SQLAlchemy(app)
+csrf = CSRFProtect(app)
 migrate = Migrate(app, db)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
@@ -35,6 +40,7 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(128))
+    is_admin = db.Column(db.Boolean, nullable=False, default=False)
     courses = db.relationship('Course', backref='creator', lazy=True, cascade="all, delete-orphan")
     enrollments = db.relationship('Enrollment', back_populates='user', lazy='dynamic', cascade="all, delete-orphan")
     reviews = db.relationship('Review', backref='user', lazy='dynamic')
@@ -45,8 +51,9 @@ class User(UserMixin, db.Model):
 class Course(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     title = db.Column(db.String(150), nullable=False)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default='draft')
     is_published = db.Column(db.Boolean, nullable=False, default=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     enrollees = db.relationship('Enrollment', back_populates='course', lazy='dynamic', cascade="all, delete-orphan")
     lessons = db.relationship('Lesson', backref='course', lazy=True, cascade="all, delete-orphan", order_by="Lesson.chapter_number")
     description = db.Column(db.Text, nullable=True)
@@ -151,7 +158,20 @@ You MUST respond with a single, specific JSON object. Choose ONE of the followin
 
 User Input: "{}"
 """
-# --- Helper Functions ---
+# --- Helper Functions & Decorators ---
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated or not current_user.is_admin:
+            flash("You do not have permission to access this page.", "danger")
+            return redirect(url_for('index'))
+        return f(*args, **kwargs)
+    return decorated_function
+
 def parse_lesson_script(script_text):
     try:
         model = genai.GenerativeModel('gemini-1.5-pro-latest')
@@ -186,7 +206,6 @@ def get_tutor_response(full_prompt):
         print(f"Error getting tutor response: {e}")
         return "I seem to be having a little trouble thinking. Could you try again?"
 
-# --- RAG (Retrieval-Augmented Generation) Helper Functions ---
 def _get_or_create_rag_retriever(lesson_id, lesson_script):
     if lesson_id in RAG_RETRIEVERS:
         return RAG_RETRIEVERS[lesson_id]
@@ -226,6 +245,35 @@ USER'S QUESTION:
     return get_tutor_response(rag_prompt)
 
 
+# --- Admin Routes ---
+@app.route('/admin/dashboard')
+@login_required
+@admin_required
+def admin_dashboard():
+    pending_courses = Course.query.filter_by(status='pending_review').all()
+    return render_template('admin_dashboard.html', pending_courses=pending_courses)
+
+@app.route('/admin/course/<string:course_id>/decide', methods=['POST'])
+@login_required
+@admin_required
+def decide_course(course_id):
+    course = Course.query.get_or_404(course_id)
+    decision = request.form.get('decision')
+
+    if decision == 'approve':
+        course.status = 'published'
+        course.is_published = True
+        flash(f"Course '{course.title}' has been approved and published.", 'success')
+    elif decision == 'reject':
+        course.status = 'rejected'
+        course.is_published = False
+        flash(f"Course '{course.title}' has been rejected and returned to the creator.", 'warning')
+    
+    db.session.commit()
+    return redirect(url_for('admin_dashboard'))
+
+
+# --- Chat and Auth Routes ---
 @app.route('/chat/intent', methods=['POST'])
 @login_required
 def classify_intent():
@@ -253,7 +301,6 @@ def classify_intent():
         print(f"Error classifying intent: {e}")
         return jsonify({"intent": "QNA", "query": user_input})
 
-# --- THE NESTED STATE MACHINE CHAT ROUTE ---
 @app.route('/chat', methods=['POST'])
 @login_required
 def chat():
@@ -265,7 +312,6 @@ def chat():
     lesson = Lesson.query.get_or_404(lesson_id)
     lesson_steps = json.loads(lesson.parsed_json).get('steps', [])
 
-    # --- Handle a request to re-display specific media ---
     if request_type == 'MEDIA_REQUEST':
         requested_alt_text = user_input
         media_to_show = None
@@ -285,7 +331,6 @@ def chat():
         else:
             request_type = 'QNA'
 
-    # 1. Authorize and load state, including chat history
     enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=lesson.course_id).first()
     is_creator = (current_user.id == lesson.course.user_id)
     if not enrollment and not is_creator:
@@ -313,11 +358,9 @@ def chat():
         else:
              session[session_key] = {'step_index': 0, 'chunk_index': 0, 'chat_log': []}
 
-    # Log the student's input if it's part of the lesson flow
     if user_input and request_type == 'LESSON_FLOW' and user_input != 'Continue':
         chat_log.append({"sender": "student", "type": "text", "content": user_input})
     
-    # Handle Q&A with RAG, which is a separate path
     if request_type == 'QNA':
         chat_log.append({"sender": "student", "type": "text", "content": user_input})
         retriever = _get_or_create_rag_retriever(lesson.id, lesson.raw_script)
@@ -330,7 +373,6 @@ def chat():
         db.session.commit()
         return jsonify({'is_qna_response': True, 'tutor_text': response_text})
 
-    # 4. Main Lesson Flow (State Machine)
     response_data = {}
     model_response_text = ""
     next_step_index, next_chunk_index = step_index, chunk_index
@@ -354,7 +396,6 @@ def chat():
     else:
         current_step = lesson_steps[step_index]
         step_type = current_step.get('type')
-
         if step_type == 'CONTENT':
             content_chunks = [chunk for chunk in current_step.get('text', '').split('\n\n') if chunk.strip()]
             if chunk_index < len(content_chunks):
@@ -366,7 +407,7 @@ def chat():
             if next_chunk_index >= len(content_chunks):
                 next_step_index = step_index + 1
                 next_chunk_index = 0
-        else: # Handles MEDIA, QUESTION_MCQ, QUESTION_SA
+        else:
             if step_type == 'MEDIA':
                 media_type = current_step.get('media_type', 'image')
                 if media_type == 'audio':
@@ -377,11 +418,7 @@ def chat():
                 model_response_text = get_tutor_response(prompt)
                 chat_log.append({"sender": "tutor", "type": "text", "content": model_response_text})
                 chat_log.append({
-                    "sender": "tutor", 
-                    "type": media_type, 
-                    "url": current_step.get('media_url'),
-                    "alt": current_step.get('alt_text')
-                })
+                    "sender": "tutor", "type": media_type, "url": current_step.get('media_url'), "alt": current_step.get('alt_text')})
                 response_data['media_url'] = current_step.get('media_url')
                 response_data['media_type'] = media_type
             elif step_type in ['QUESTION_MCQ', 'QUESTION_SA']:
@@ -389,14 +426,10 @@ def chat():
                 model_response_text = get_tutor_response(prompt)
                 chat_log.append({"sender": "tutor", "type": "text", "content": model_response_text})
                 response_data['question'] = current_step
-            
             next_step_index = step_index + 1
             next_chunk_index = 0
-
     if model_response_text:
         response_data['tutor_text'] = model_response_text
-
-    # 5. Save the new state and conversation log
     if enrollment:
         history_record.current_step_index = next_step_index
         history_record.current_chunk_index = next_chunk_index
@@ -407,12 +440,9 @@ def chat():
             'chunk_index': next_chunk_index,
             'chat_log': chat_log
         }
-    
     db.session.commit()
     return jsonify(response_data)
 
-
-# --- All Other Routes ---
 @app.route('/chat/reset', methods=['POST'])
 @login_required
 def reset_conversation():
@@ -424,9 +454,9 @@ def reset_conversation():
         if history_record:
             history_record.current_step_index = 0
             history_record.current_chunk_index = 0
-            history_record.history_json = '[]' # Also clear the log
+            history_record.history_json = '[]'
             db.session.commit()
-    else: # Creator preview
+    else: 
         session_key = f'preview_chat_{lesson_id}'
         if session_key in session:
             del session[session_key]
@@ -441,15 +471,13 @@ def delete_last_turn():
     if enrollment:
         history_record = ChatHistory.query.filter_by(enrollment_id=enrollment.id, lesson_id=lesson.id).first()
         if history_record:
-            # This is a complex operation; for now, we just revert the step/chunk.
-            # A full implementation would require popping from the chat_log and re-evaluating state.
             if history_record.current_chunk_index > 0:
                 history_record.current_chunk_index -= 1
             elif history_record.current_step_index > 0:
                 history_record.current_step_index -= 1
-                history_record.current_chunk_index = 0
+                history_record.current_chunk_index = 0 
             db.session.commit()
-    else: # Creator preview
+    else:
         session_key = f'preview_chat_{lesson_id}'
         if session_key in session:
             if session[session_key]['chunk_index'] > 0:
@@ -524,7 +552,7 @@ def create_course():
     new_course = Course(title=title, user_id=current_user.id)
     db.session.add(new_course)
     db.session.commit()
-    flash('Course created! You can now manage its chapters.', 'success')
+    flash('Course created! You can now manage it.', 'success')
     return redirect(url_for('manage_course', course_id=new_course.id))
 
 @app.route('/course/<string:course_id>/manage')
@@ -557,6 +585,9 @@ def save_chapter(course_id):
     audio_urls = []
     for uploaded_file in uploaded_files:
         if uploaded_file.filename != '':
+            if not allowed_file(uploaded_file.filename):
+                flash('Invalid file type. Allowed types are: png, jpg, jpeg, gif, mp3, wav, ogg', 'danger')
+                return redirect(request.url)
             filename = str(uuid.uuid4()) + os.path.splitext(uploaded_file.filename)[1]
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             uploaded_file.save(filepath)
@@ -618,6 +649,9 @@ def update_chapter(lesson_id):
     audio_urls = []
     for uploaded_file in uploaded_files:
         if uploaded_file.filename != '':
+            if not allowed_file(uploaded_file.filename):
+                flash('Invalid file type. Allowed types are: png, jpg, jpeg, gif, mp3, wav, ogg', 'danger')
+                return redirect(request.url)
             filename = str(uuid.uuid4()) + os.path.splitext(uploaded_file.filename)[1]
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             uploaded_file.save(filepath)
@@ -669,21 +703,53 @@ def delete_chapter(lesson_id):
     db.session.delete(lesson)
     subsequent_chapters = Lesson.query.filter(Lesson.course_id == course_id, Lesson.chapter_number > deleted_chapter_number).order_by(Lesson.chapter_number).all()
     for chapter in subsequent_chapters: chapter.chapter_number -= 1
-    if lesson_id in RAG_RETRIEVERS: del RAG_RETRIEVERS[lesson_id]
+    if lesson_id in RAG_RETRIEVERS: del RAG_RETRIEVERS[lesson.id]
     db.session.commit()
     flash('Chapter deleted successfully.', 'success')
     return redirect(url_for('manage_course', course_id=course.id))
 
+@app.route('/course/<string:course_id>/submit_review', methods=['POST'])
+@login_required
+def submit_for_review(course_id):
+    course = Course.query.get_or_404(course_id)
+    if course.creator.id != current_user.id: abort(403)
+    
+    course.status = 'pending_review'
+    course.is_published = False
+    db.session.commit()
+    
+    flash('Your course has been submitted for review!', 'success')
+    return redirect(url_for('manage_course', course_id=course.id))
+
+@app.route('/course/<string:course_id>/unpublish', methods=['POST'])
+@login_required
+def unpublish_course(course_id):
+    course = Course.query.get_or_404(course_id)
+    if course.creator.id != current_user.id and not current_user.is_admin:
+        abort(403)
+        
+    course.status = 'draft'
+    course.is_published = False
+    db.session.commit()
+    
+    flash('Course has been unpublished and returned to draft status.', 'info')
+    return redirect(url_for('manage_course', course_id=course.id))
+
 @app.route('/explore')
 def explore():
-    courses = Course.query.filter_by(is_published=True).order_by(Course.title).all()
+    courses = Course.query.filter_by(status='published').order_by(Course.title).all()
     return render_template('explore.html', courses=courses)
 
 @app.route('/course/<string:course_id>')
 @login_required
 def course_player(course_id):
     course = Course.query.get_or_404(course_id)
-    is_authorized = course.is_published or (current_user.is_authenticated and (current_user.id == course.user_id or current_user.is_enrolled(course)))
+    is_authorized = course.status == 'published' or \
+                    (current_user.is_authenticated and (
+                        current_user.id == course.user_id or 
+                        current_user.is_enrolled(course) or 
+                        current_user.is_admin
+                    ))
     if not is_authorized: abort(404)
     if not course.lessons:
         if current_user.is_authenticated and current_user.id == course.user_id:
@@ -702,7 +768,12 @@ def course_player(course_id):
 @login_required
 def student_chapter_view(course_id, chapter_number):
     course = Course.query.get_or_404(course_id)
-    is_authorized = course.is_published or course.user_id == current_user.id or current_user.is_enrolled(course)
+    is_authorized = course.status == 'published' or \
+                    (current_user.is_authenticated and (
+                        current_user.id == course.user_id or 
+                        current_user.is_enrolled(course) or 
+                        current_user.is_admin
+                    ))
     if not is_authorized: abort(404)
     lesson = Lesson.query.filter_by(course_id=course.id, chapter_number=chapter_number).first_or_404()
     enrollment = Enrollment.query.filter_by(user_id=current_user.id, course_id=course.id).first()
@@ -716,7 +787,7 @@ def student_chapter_view(course_id, chapter_number):
                 "current_step_index": chat_history_record.current_step_index, 
                 "current_chunk_index": chat_history_record.current_chunk_index
             }
-    else: # Creator preview
+    else: 
         session_key = f'preview_chat_{lesson.id}'
         if session_key in session:
             del session[session_key]
@@ -743,8 +814,11 @@ def enroll_in_course(course_id):
 def course_detail_page(course_id):
     course = Course.query.get_or_404(course_id)
     share_id = request.args.get('share_id')
-    is_authorized = course.is_published or \
-                    (current_user.is_authenticated and current_user.id == course.user_id) or \
+    is_authorized = course.status == 'published' or \
+                    (current_user.is_authenticated and (
+                        current_user.id == course.user_id or 
+                        current_user.is_admin
+                    )) or \
                     (course.shareable_link_id and course.shareable_link_id == share_id)
     if not is_authorized: abort(404)
     return render_template('course_detail.html', course=course, share_id=share_id)
@@ -796,23 +870,15 @@ def update_course_details(course_id):
     if 'thumbnail' in request.files:
         file = request.files['thumbnail']
         if file.filename != '':
+            if not allowed_file(file.filename):
+                flash('Invalid file type for thumbnail. Allowed types are: png, jpg, jpeg, gif', 'danger')
+                return redirect(request.url)
             filename = str(uuid.uuid4()) + os.path.splitext(file.filename)[1]
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
             course.thumbnail_url = url_for('static', filename=f'uploads/{filename}')
     db.session.commit()
     flash('Course details updated successfully!', 'success')
-    return redirect(url_for('manage_course', course_id=course.id))
-
-@app.route('/course/<string:course_id>/update_publish_status', methods=['POST'])
-@login_required
-def update_publish_status(course_id):
-    course = Course.query.get_or_404(course_id)
-    if course.creator.id != current_user.id: abort(403)
-    status = request.form.get('publish_status')
-    course.is_published = (status == 'public')
-    db.session.commit()
-    flash('Publishing status updated!', 'success')
     return redirect(url_for('manage_course', course_id=course.id))
 
 @app.route('/course/<string:course_id>/generate_link', methods=['POST'])

@@ -10,6 +10,7 @@
 <hr class="section-divider">
 <h3>Course Details</h3>
 <form action="{{ url_for('update_course_details', course_id=course.id) }}" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="form-group">
         <label for="description">Course Description</label>
         <textarea name="description" id="description" rows="4" placeholder="Briefly describe what students will learn in this course.">{{ course.description or '' }}</textarea>
@@ -26,6 +27,8 @@
 
 <h3>Publishing Status</h3>
 <form action="{{ url_for('update_publish_status', course_id=course.id) }}" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
     <select name="publish_status">
         <option value="private" {% if not course.is_published %}selected{% endif %}>Private (Only you can see this)</option>
         <option value="public" {% if course.is_published %}selected{% endif %}>Public (Visible on Explore page)</option>
@@ -41,6 +44,7 @@
         <input type="text" readonly value="{{ url_for('shared_course_view', link_id=course.shareable_link_id, _external=True) }}">
     {% else %}
         <form action="{{ url_for('generate_share_link', course_id=course.id) }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-secondary">Generate Private Link</button>
         </form>
     {% endif %}
@@ -51,6 +55,7 @@
     <a href="{{ url_for('add_chapter_page', course_id=course.id) }}" class="btn btn-primary">Add New Chapter</a>
      <!-- THIS IS THE CORRECTED LINE -->
      <form action="{{ url_for('update_publish_status', course_id=course.id) }}" method="post" style="display: inline;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% if course.lessons %}
             <!-- We now send a hidden input to toggle the status -->
             <input type="hidden" name="publish_status" value="{{ 'private' if course.is_published else 'public' }}">
@@ -81,6 +86,7 @@
                     <div class="chapter-actions">
                         <a href="{{ url_for('edit_chapter_page', lesson_id=chapter.id) }}" class="btn btn-secondary">Edit</a>
                         <form action="{{ url_for('delete_chapter', lesson_id=chapter.id) }}" method="post" style="display: inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-danger" onclick="return confirm('Are you sure you want to permanently delete this chapter? This action cannot be undone.');">
                                 Delete
                             </button>

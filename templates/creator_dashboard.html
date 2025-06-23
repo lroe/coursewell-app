@@ -8,6 +8,7 @@
         <h3>Scribe a New Course</h3>
         <form action="{{ url_for('create_course') }}" method="post" class="inline-form">
             <div class="form-group">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="text" id="title" name="title" required placeholder="Title your new codex...">
             </div>
             <button type="submit" class="btn">Begin</button>

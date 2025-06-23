@@ -19,6 +19,9 @@
             <a href="{{ url_for('dashboard') }}">My Shelf</a>
             <a href="{{ url_for('creator_dashboard') }}">Write a Course</a>
             <a href="{{ url_for('logout') }}">Logout</a>
+            {% if current_user.is_admin %}
+                <a href="{{ url_for('admin_dashboard') }}" style="color: #c8811a; font-weight: bold;">Admin Panel</a>
+            {% endif %}
         {% else %}
             <a href="{{ url_for('login') }}">Login</a>
             <a href="{{ url_for('register') }}">Register</a>
