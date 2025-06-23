@@ -107,18 +107,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function addAudioMessage(url, description) {
+        // This function now only adds the audio player, not the description text.
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message tutor-message audio-message';
         
-        const desc = document.createElement('p');
-        desc.style.marginBottom = '5px';
-        desc.innerText = description;
-
         const audio = document.createElement('audio');
         audio.controls = true;
         audio.src = url;
         
-        messageDiv.appendChild(desc);
         messageDiv.appendChild(audio);
         chatBox.appendChild(messageDiv);
         chatBox.scrollTop = chatBox.scrollHeight;
@@ -221,17 +217,22 @@ document.addEventListener('DOMContentLoaded', () => {
         qnaInput.disabled = false;
         sendQnaBtn.disabled = false;
         
-        // Render new messages and media from the backend
-        if (data.media_url) {
-            if (data.media_type === 'audio') {
-                addAudioMessage(data.media_url, data.tutor_text || "Listen to this:");
-            } else { // Default to image
-                addImageMessage(data.media_url, "Lesson media");
-            }
-        }
-        if (data.tutor_text && !data.media_url) { // Don't show text twice for media
+        // --- NEW RENDERING LOGIC ---
+        // First, ALWAYS render the tutor's text message if it exists.
+        if (data.tutor_text) {
              addMessage(data.tutor_text, 'tutor');
         }
+
+        // Second, if there's also media, render the media player in a separate bubble.
+        if (data.media_url) {
+            if (data.media_type === 'audio') {
+                // The description is now handled by the separate text message above.
+                addAudioMessage(data.media_url, "Listen to the clip above:"); 
+            } else { // Default to image
+                addImageMessage(data.media_url, "View the image above");
+            }
+        }
+        // --- END OF NEW LOGIC ---
 
         if (data.is_qna_response) {
              showContinueButton();

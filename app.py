@@ -128,7 +128,8 @@ Here is the text to explain:
 {}
 ---
 """,
-    "MEDIA": "An image with the description '{}' has just been shown. Briefly call the student's attention to it and ask if they are ready to continue.",
+    "MEDIA_IMAGE": "An image with the description '{}' has just been shown. Briefly call the student's attention to it and ask if they are ready to continue.",
+    "MEDIA_AUDIO": "An audio clip with the description '{}' is available to play. Briefly encourage the student to listen to it and ask if they are ready to continue when they're done.",
     "QUESTION": "Okay, time for a quick question to check your understanding: {}"
 }
 
@@ -280,8 +281,17 @@ def chat():
         else:
             if step_type == 'MEDIA':
                 response_data['media_url'] = current_step.get('media_url')
-                response_data['media_type'] = current_step.get('media_type', 'image')
-                prompt = TUTOR_PROMPT_TEMPLATE['MEDIA'].format(current_step.get('alt_text', ''))
+                media_type = current_step.get('media_type', 'image')
+                response_data['media_type'] = media_type
+                
+                # Dynamic prompt selection based on media_type
+                if media_type == 'audio':
+                    prompt_template = TUTOR_PROMPT_TEMPLATE['MEDIA_AUDIO']
+                else: # Default to image
+                    prompt_template = TUTOR_PROMPT_TEMPLATE['MEDIA_IMAGE']
+                
+                prompt = prompt_template.format(current_step.get('alt_text', ''))
+
             elif step_type in ['QUESTION_MCQ', 'QUESTION_SA']:
                 response_data['question'] = current_step
                 prompt = TUTOR_PROMPT_TEMPLATE['QUESTION'].format(current_step.get('question', ''))
@@ -441,25 +451,38 @@ def save_chapter(course_id):
         flash('Both a title and script are required.', 'warning')
         return redirect(url_for('add_chapter_page', course_id=course.id))
     
+    # --- Start of New Hydration Logic ---
     uploaded_files = request.files.getlist('media_files')
-    media_urls = []
+    image_urls = []
+    audio_urls = []
     for uploaded_file in uploaded_files:
         if uploaded_file.filename != '':
             filename = str(uuid.uuid4()) + os.path.splitext(uploaded_file.filename)[1]
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             uploaded_file.save(filepath)
-            media_urls.append(url_for('static', filename=f'uploads/{filename}'))
-    
+            url = url_for('static', filename=f'uploads/{filename}')
+            if uploaded_file.content_type.startswith('image/'):
+                image_urls.append(url)
+            elif uploaded_file.content_type.startswith('audio/'):
+                audio_urls.append(url)
+
     parsed_data = parse_lesson_script(script)
     if not parsed_data:
         flash('The AI could not understand the lesson structure. Please check your tags and try again.', 'danger')
         return redirect(url_for('add_chapter_page', course_id=course.id))
     
-    media_url_iterator = iter(media_urls)
+    image_url_iterator = iter(image_urls)
+    audio_url_iterator = iter(audio_urls)
+    
     for step in parsed_data.get('steps', []):
         if step.get('type') == 'MEDIA':
-            try: step['media_url'] = next(media_url_iterator)
-            except StopIteration: break
+            if step.get('media_type') == 'image':
+                try: step['media_url'] = next(image_url_iterator)
+                except StopIteration: step['media_url'] = None
+            elif step.get('media_type') == 'audio':
+                try: step['media_url'] = next(audio_url_iterator)
+                except StopIteration: step['media_url'] = None
+    # --- End of New Hydration Logic ---
             
     last_chapter = Lesson.query.filter_by(course_id=course.id).order_by(Lesson.chapter_number.desc()).first()
     new_chapter_number = (last_chapter.chapter_number + 1) if last_chapter else 1
@@ -476,40 +499,71 @@ def edit_chapter_page(lesson_id):
     if lesson.course.creator.id != current_user.id: abort(403)
     return render_template('edit_chapter.html', lesson=lesson)
 
+# In app.py, replace the ENTIRE update_chapter function with this one.
+
 @app.route('/chapter/<string:lesson_id>/update', methods=['POST'])
 @login_required
 def update_chapter(lesson_id):
     lesson = Lesson.query.get_or_404(lesson_id)
     if lesson.course.creator.id != current_user.id: abort(403)
-    lesson.title = request.form['title']
-    lesson.raw_script = request.form['script']
     
+    # --- Start of New, Smarter Logic ---
+    old_media_map = {}
+    if lesson.parsed_json:
+        try:
+            old_data = json.loads(lesson.parsed_json)
+            for step in old_data.get('steps', []):
+                if step.get('type') == 'MEDIA' and step.get('media_url'):
+                    old_media_map[step.get('alt_text')] = step['media_url']
+        except (json.JSONDecodeError, AttributeError): pass
+
     uploaded_files = request.files.getlist('media_files')
-    media_urls = []
+    image_urls = []
+    audio_urls = []
     for uploaded_file in uploaded_files:
         if uploaded_file.filename != '':
             filename = str(uuid.uuid4()) + os.path.splitext(uploaded_file.filename)[1]
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             uploaded_file.save(filepath)
-            media_urls.append(url_for('static', filename=f'uploads/{filename}'))
-            
+            url = url_for('static', filename=f'uploads/{filename}')
+            if uploaded_file.content_type.startswith('image/'):
+                image_urls.append(url)
+            elif uploaded_file.content_type.startswith('audio/'):
+                audio_urls.append(url)
+
+    lesson.title = request.form['title']
+    lesson.raw_script = request.form['script']
+    
     parsed_data = parse_lesson_script(lesson.raw_script)
     if not parsed_data:
         flash('The AI could not understand the lesson structure.', 'danger')
         return redirect(url_for('edit_chapter_page', lesson_id=lesson.id))
         
-    media_url_iterator = iter(media_urls)
+    image_url_iterator = iter(image_urls)
+    audio_url_iterator = iter(audio_urls)
+
     for step in parsed_data.get('steps', []):
         if step.get('type') == 'MEDIA':
-            try: step['media_url'] = next(media_url_iterator)
-            except StopIteration: break
+            media_type = step.get('media_type')
+            alt_text = step.get('alt_text')
+            assigned_url = old_media_map.get(alt_text) 
+
+            if media_type == 'image':
+                try: assigned_url = next(image_url_iterator)
+                except StopIteration: pass
+            elif media_type == 'audio':
+                try: assigned_url = next(audio_url_iterator)
+                except StopIteration: pass
             
+            step['media_url'] = assigned_url
+
+    # --- End of New Logic ---
+
     lesson.parsed_json = json.dumps(parsed_data)
     if lesson.id in RAG_RETRIEVERS: del RAG_RETRIEVERS[lesson.id]
     db.session.commit()
     flash('Chapter updated successfully!', 'success')
     return redirect(url_for('manage_course', course_id=lesson.course.id))
-
 @app.route('/chapter/<string:lesson_id>/delete', methods=['POST'])
 @login_required
 def delete_chapter(lesson_id):

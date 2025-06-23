@@ -4,18 +4,31 @@
     <meta charset="UTF-8">
     <title>{{ current_lesson.title }} | {{ course.title }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <style>
+            <style>
         .chat-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
         }
-        /* Style for audio player in chat */
+
+        /* --- FINAL AUDIO STYLING --- */
+
+        /* This is the key fix. It overrides the problematic styles from style.css */
+        .tutor-message.audio-message {
+            float: none;           /* Disables the float behavior */
+            clear: both;           /* Ensures it starts on a new line */
+            width: 100%;           /* Forces it to take up space */
+            max-width: 450px;      /* A reasonable max width */
+            padding: 8px;          /* Tighter padding */
+            background-color: transparent; /* Makes the bubble itself invisible */
+            border: none;          /* Removes the bubble's border */
+            box-shadow: none;      /* Removes the bubble's shadow */
+        }
+
+        /* This styles the <audio> element itself inside the now-invisible bubble */
         .audio-message audio {
             width: 100%;
-            margin-top: 5px;
-            filter: sepia(20%) saturate(70%) grayscale(1) contrast(95%) brightness(90%);
-            border-radius: 50px;
+            display: block;
         }
     </style>
 </head>
